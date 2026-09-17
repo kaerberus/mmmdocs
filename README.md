@@ -97,8 +97,10 @@ An old plan already exists (79 files). Overwrite it with a fresh classification?
 
 The build path:
 
-1. **Document type** — `Detected: <label> (<method>, <conf>)`. Keys: `Enter`
-   accept · `p` pick · `n` new preset · `k` keep current.
+1. **Document type** — `Detected: <label> (<method>, <conf>)`. If it differs from
+   the current preset you choose **`[Y] use detected`** or **`k keep current`**;
+   if it matches, just **`[Enter] continue`**. Either way, `p` picks another
+   preset and `n` builds a new one (no second confirmation after choosing).
 2. **Ready** — folder, preset, template, mode, model, workers, file count →
    `Classify and build the plan? [Y/n]`.
 3. **Classify → plan** — progress, then counts and flagged files.

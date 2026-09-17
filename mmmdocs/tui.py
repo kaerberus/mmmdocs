@@ -520,31 +520,39 @@ class App:
         report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg))
         if report is None:
             return
-        while True:
-            chosen = report.get("preset") or "books"
-            body = self._preset_map().get(chosen) or {}
-            print("\nDocument type: %s [%s]   template: %s" % (
-                body.get("label", chosen), chosen,
-                body.get("name_template") or self.cfg.get("name_template")))
-            if report.get("method") != "manual":
-                print(_c("  detection: %s %.2f \u2014 %s" % (
-                    report.get("method"), report.get("confidence", 0.0),
-                    report.get("reason", "")), "90"))
-            choice = input("Use this? [Y]   p pick   n new preset   k keep current: ").strip().lower()
-            if choice in ("", "y", "yes"):
+        chosen = report.get("preset") or "books"
+        current = self.cfg.get("preset")
+        preset_map = self._preset_map()
+        detected = preset_map.get(chosen) or {}
+        if chosen != current:
+            cur = preset_map.get(current) or {}
+            print("\nDetected: %s [%s]   template: %s" % (
+                detected.get("label", chosen), chosen,
+                detected.get("name_template") or self.cfg.get("name_template")))
+            print(_c("  %s %.2f \u2014 %s" % (
+                report.get("method"), report.get("confidence", 0.0), report.get("reason", "")), "90"))
+            print("  current: %s [%s]   template: %s" % (
+                cur.get("label", current), current, self.cfg.get("name_template")))
+            choice = input("[Y] use detected   k keep current   p pick   n new preset: ").strip().lower()
+            if choice == "k":
+                pass
+            elif choice == "p":
+                self.choose_preset()
+            elif choice == "n":
+                self._new_preset()
+            else:
                 self._apply_preset(chosen)
-                break
+        else:
+            print("\nDocument type: %s [%s]   template: %s" % (
+                detected.get("label", chosen), chosen,
+                detected.get("name_template") or self.cfg.get("name_template")))
+            print(_c("  %s %.2f \u2014 %s" % (
+                report.get("method"), report.get("confidence", 0.0), report.get("reason", "")), "90"))
+            choice = input("[Enter] continue   p pick   n new preset: ").strip().lower()
             if choice == "p":
                 self.choose_preset()
-                report = {"preset": self.cfg.get("preset"), "method": "manual", "confidence": 1.0, "reason": "chosen"}
-                continue
-            if choice == "n":
+            elif choice == "n":
                 self._new_preset()
-                report = {"preset": self.cfg.get("preset"), "method": "manual", "confidence": 1.0, "reason": "created"}
-                continue
-            if choice == "k":
-                break
-            warn("Unknown choice.")
         count = self._pdf_count()
         if count == 0:
             warn("No PDFs in %s" % self.directory)
