@@ -183,32 +183,28 @@ class App:
     # ------------------------------------------------------------------ views
     def header(self):
         print(_c("mmmdocs", "1;36") + _c("  —  local vision PDF cataloger", "90"))
-        print(_c("  folder      ", "90") + _shorten(self.directory))
-        print(_c("  vision      ", "90") + "%s (%s)" % (self.cfg.get("vision_model"), self.cfg.get("vision_input")))
-        print(_c("  orchestrator", "90") + " %s (%s)" % (self.cfg.get("orchestrator_model"), self.cfg.get("orchestrator_input")))
-        print(_c("  preset      ", "90") + " %s%s" % (self.cfg.get("preset"), " (customized)" if self._preset_customized() else ""))
-        print(_c("  detect      ", "90") + " %s" % self.cfg.get("detect_method"))
-        print(_c("  workers     ", "90") + str(self.cfg.get("workers")))
-        state = "up, %d models" % len(self.models) if self.reachable else "offline (vision unavailable)"
-        print(_c("  ollama      ", "90") + state)
-        catalog = self.catalog()
+        print(_c("  folder  ", "90") + "%s  (%d PDFs)" % (_shorten(self.directory), self._pdf_count()))
+        print(_c("  preset  ", "90") + "%s%s   model: %s   workers: %s" % (
+            self.cfg.get("preset"),
+            " (customized)" if self._preset_customized() else "",
+            self.cfg.get("vision_model"), self.cfg.get("workers")))
+        state = ("ollama up (%d models)" % len(self.models)) if self.reachable else "ollama OFFLINE"
+        print(_c("  status  ", "90") + state)
+        catalog, plan = self.catalog(), self.plan()
+        bits = []
         if catalog:
-            print(_c("  catalog     ", "90") + "%d records" % catalog.get("count", 0))
+            bits.append("%d classified" % catalog.get("count", 0))
+        if plan:
+            bits.append("%d planned" % plan.get("count", 0))
+        if bits:
+            print(_c("  plan    ", "90") + ", ".join(bits))
         print()
 
     def menu(self):
-        print("  0  YOLO: detect, build and organize everything")
-        print("  1  Automatically detect & build plan")
-        print("  2  Review plan")
-        print("  3  Apply plan")
-        print("  4  View catalog")
-        print("  5  Scan folder (manifest, no model)")
-        print("  6  Rebuild plan from catalog (no model)")
-        print("  7  Document type / preset")
-        print("  8  Choose another directory   (%s)" % _shorten(self.directory, 40))
-        print("  9  Settings")
-        print("  c  Clean raster cache")
+        print("  0  YOLO — auto-detect, build, and organize everything")
+        print("  1  Set up and run — guided")
         print("  u  Undo last apply")
+        print("  s  Settings")
         print("  q  Quit")
 
     # ---------------------------------------------------------------- presets
@@ -471,7 +467,7 @@ class App:
             warn("Ollama is offline; classification will not work.")
         self.prompt_directory()
         print(_c("  preset: %s  |  model: %s" % (self.cfg.get("preset"), self.cfg.get("vision_model")), "90"))
-        print(_c("  start with 0 (YOLO) or 1 (auto-build & plan)\n", "90"))
+        print(_c("  0 = YOLO (detect, build, organize)   ·   1 = set up and run (guided)\n", "90"))
 
     def prompt_directory(self):
         while True:
@@ -514,23 +510,54 @@ class App:
         ok("Directory set to %s" % self.directory)
         _pause()
 
-    def auto_build(self):
+    def guided_run(self):
+        catalog, plan = self.catalog(), self.plan()
+        if catalog and plan:
+            if not ask("An old plan already exists (%d files). Overwrite it with a fresh classification?"
+                       % catalog.get("count", 0), default=False):
+                self.review_and_apply()
+                return
         report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg))
         if report is None:
             return
-        chosen = report.get("preset") or "books"
-        self._apply_preset(chosen)
-        body = self._preset_map().get(chosen) or {}
-        print("\nDetected: %s (%s, %.2f) \u2014 %s" % (
-            body.get("label", chosen), report.get("method"), report.get("confidence", 0.0),
-            report.get("reason", "")))
-        print("Using preset %r  |  template: %s" % (chosen, self.cfg.get("name_template")))
+        while True:
+            chosen = report.get("preset") or "books"
+            body = self._preset_map().get(chosen) or {}
+            print("\nDocument type: %s [%s]   template: %s" % (
+                body.get("label", chosen), chosen,
+                body.get("name_template") or self.cfg.get("name_template")))
+            if report.get("method") != "manual":
+                print(_c("  detection: %s %.2f \u2014 %s" % (
+                    report.get("method"), report.get("confidence", 0.0),
+                    report.get("reason", "")), "90"))
+            choice = input("Use this? [Y]   p pick   n new preset   k keep current: ").strip().lower()
+            if choice in ("", "y", "yes"):
+                self._apply_preset(chosen)
+                break
+            if choice == "p":
+                self.choose_preset()
+                report = {"preset": self.cfg.get("preset"), "method": "manual", "confidence": 1.0, "reason": "chosen"}
+                continue
+            if choice == "n":
+                self._new_preset()
+                report = {"preset": self.cfg.get("preset"), "method": "manual", "confidence": 1.0, "reason": "created"}
+                continue
+            if choice == "k":
+                break
+            warn("Unknown choice.")
         count = self._pdf_count()
         if count == 0:
             warn("No PDFs in %s" % self.directory)
             _pause()
             return
-        if not ask("Classify %d file(s) with %s and build the plan?" % (count, self.cfg.get("vision_model")), default=True):
+        print(_c("\nReady", "1"))
+        print("  directory : %s" % self.directory)
+        print("  preset    : %s" % self.cfg.get("preset"))
+        print("  template  : %s" % self.cfg.get("name_template"))
+        print("  mode      : %s" % self.cfg.get("mode"))
+        print("  model     : %s   workers: %s   files: %d"
+              % (self.cfg.get("vision_model"), self.cfg.get("workers"), count))
+        if not ask("Classify and build the plan?", default=True):
             return
         _clear()
         self.header()
@@ -542,8 +569,8 @@ class App:
         ok("%d classified, %d planned" % (catalog["count"], len(plan)))
         if flagged:
             warn("%d need review" % len(flagged))
-        print("Press 2 to review the plan, 3 to apply.")
         _pause()
+        self.review_and_apply()
 
     def yolo(self):
         report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg))
@@ -589,30 +616,9 @@ class App:
         print(_c("  Undo: press u (or run `mmmdocs undo <dir>`).", "90"))
         _pause()
 
-    def review_plan(self):
-        catalog = self.catalog()
-        if not catalog or not self.plan():
-            _clear()
-            self.header()
-            warn("No catalog/plan yet. Use 1 (auto-build) or 0 (YOLO).")
-            _pause()
-            return
-        _clear()
-        self.header()
-        records = catalog["records"]
-        flagged = [r for r in records if r.get("needs_human") or r.get("error")]
-        print(_c("Catalog", "1") + "  %d records, %d flagged" % (len(records), len(flagged)))
-        for rec in flagged[:8]:
-            print("  ! %s" % os.path.basename(rec["file"])[:80])
-        if len(flagged) > 8:
-            print("  ... and %d more" % (len(flagged) - 8))
-        result = self._safe("plan", lambda: self.pipeline.apply_plan(
-            self.directory, dry_run=True, min_confidence=self.cfg.get("min_confidence")))
-        if result is None:
-            return
-        print(_c("\nProposed changes — %d file(s), %d skipped" % (result["moved"], result["skipped"]), "1"))
+    def _plan_lines(self, preview):
         by_dir = {}
-        for move in result["moves"]:
+        for move in preview["moves"]:
             old = os.path.basename(move["src"])
             new = os.path.basename(move["dest"])
             by_dir.setdefault(move.get("dir") or ".", []).append((old, new))
@@ -625,9 +631,61 @@ class App:
                 else:
                     lines.append("    %s" % old[:48])
                     lines.append(_c("      -> %s" % new[:100], "32"))
-        self._page(lines)
-        print("\nPress 3 to apply.")
+        return lines
+
+    def _skip_summary(self, skip_reasons):
+        if not skip_reasons:
+            return
+        counts = {}
+        for skip in skip_reasons:
+            counts[skip["reason"]] = counts.get(skip["reason"], 0) + 1
+        print(_c("  skipped: " + ", ".join("%s=%d" % (k, v) for k, v in sorted(counts.items())), "90"))
+
+    def _apply_from_plan(self, force=False):
+        applied = self._safe("apply", lambda: self.pipeline.apply_plan(
+            self.directory, dry_run=False, force=force,
+            min_confidence=self.cfg.get("min_confidence")))
+        if applied is None:
+            return
+        ok("Changed %d file(s), %d skipped." % (applied["moved"], applied["skipped"]))
+        self._skip_summary(applied["skip_reasons"])
+        print(_c("  Undo: press u.", "90"))
         _pause()
+
+    def review_and_apply(self):
+        catalog = self.catalog()
+        if not catalog or not self.plan():
+            _clear()
+            self.header()
+            warn("No plan yet. Use 0 (YOLO) or 1 (set up and run).")
+            _pause()
+            return
+        _clear()
+        self.header()
+        records = catalog["records"]
+        flagged = [r for r in records if r.get("needs_human") or r.get("error")]
+        print(_c("Plan", "1") + "  %d files, %d flagged" % (len(records), len(flagged)))
+        for rec in flagged[:8]:
+            print("  ! %s" % os.path.basename(rec["file"])[:80])
+        if len(flagged) > 8:
+            print("  ... and %d more" % (len(flagged) - 8))
+        preview = self._safe("plan", lambda: self.pipeline.apply_plan(
+            self.directory, dry_run=True, min_confidence=self.cfg.get("min_confidence")))
+        if preview is None:
+            return
+        print(_c("\nProposed changes — %d file(s), %d skipped" % (preview["moved"], preview["skipped"]), "1"))
+        self._page(self._plan_lines(preview))
+        self._skip_summary(preview["skip_reasons"])
+        if not preview["moves"]:
+            print("Nothing to change.")
+            _pause()
+            return
+        answer = input("\nApply now? [y/N]   (f = force, includes flagged)  ").strip().lower()
+        if answer not in ("y", "yes", "f", "force"):
+            print("Plan saved — press 1 to review it again later.")
+            _pause()
+            return
+        self._apply_from_plan(force=answer in ("f", "force"))
 
     def undo_last(self):
         result = self._safe("undo", lambda: self.pipeline.undo_plan(self.directory, dry_run=True))
@@ -674,41 +732,12 @@ class App:
                     print("    - %s" % os.path.basename(path))
         _pause()
 
-    def classify(self):
-        total = 0
-        manifest_catalog = self.catalog()
-        if manifest_catalog:
-            total = manifest_catalog.get("count", 0)
-        print("This will classify every PDF in:")
-        print("  %s" % self.directory)
-        print("using %s (workers=%s)." % (self.cfg.get("vision_model"), self.cfg.get("workers")))
-        if total:
-            print(_c("An existing catalog.json (%d records) will be overwritten." % total, "33"))
-        if not ask("Continue?", default=True):
-            return
-        _clear()
-        self.header()
-        result = self._safe("classify", lambda: self.pipeline.run(self.directory, self.cfg))
-        if result is None:
-            return
-        catalog, plan = result
-        records = catalog["records"]
-        flagged = [r for r in records if r.get("needs_human") or r.get("error")]
-        ok("%d classified, %d planned" % (catalog["count"], len(plan)))
-        if flagged:
-            warn("%d need review:" % len(flagged))
-            for rec in flagged:
-                print("   - %s" % os.path.basename(rec["file"]))
-        else:
-            print("   (nothing flagged; use 5 to preview the moves)")
-        _pause()
-
     def view_catalog(self):
         catalog = self.catalog()
         _clear()
         self.header()
         if not catalog:
-            warn("No catalog.json yet. Run option 3 first.")
+            warn("No catalog.json yet. Use 0 (YOLO) or 1 (set up and run).")
             _pause()
             return
         print(_c("%-44s %-20s %-16s %5s %s" % ("TITLE", "AUTHOR", "TYPE", "CONF", "FLAG"), "1"))
@@ -723,55 +752,6 @@ class App:
                 flag,
             ))
         print(_c("\n%s" % catalog.get("taxonomy_reason", ""), "90"))
-        _pause()
-
-    def preview_plan(self, dry_run=True):
-        plan = self.plan()
-        if not plan:
-            _clear()
-            self.header()
-            warn("No move-plan.json yet. Run option 3 first.")
-            _pause()
-            return None
-        result = self._safe("plan", lambda: self.pipeline.apply_plan(
-            self.directory, dry_run=dry_run, min_confidence=self.cfg.get("min_confidence")))
-        if result is None:
-            return None
-        _clear()
-        self.header()
-        mode = "DRY-RUN" if result["dry_run"] else "APPLIED"
-        print(_c("%s — %d file(s), %d skipped" % (mode, result["moved"], result["skipped"]), "1"))
-        by_dir = {}
-        for move in result["moves"]:
-            old = os.path.basename(move["src"])
-            new = os.path.basename(move["dest"])
-            by_dir.setdefault(move.get("dir") or ".", []).append((old, new))
-        for folder in sorted(by_dir):
-            print(_c("\n  %s/" % folder, "36"))
-            for old, new in by_dir[folder]:
-                if old == new:
-                    print("    %s" % new[:100])
-                else:
-                    print("    %s" % old[:48])
-                    print(_c("      -> %s" % new[:100], "32"))
-        if result["skip_reasons"]:
-            counts = {}
-            for skip in result["skip_reasons"]:
-                counts[skip["reason"]] = counts.get(skip["reason"], 0) + 1
-            print(_c("\n  skipped: " + ", ".join("%s=%d" % (k, v) for k, v in sorted(counts.items())), "90"))
-        return result
-
-    def apply_plan(self):
-        result = self.preview_plan(dry_run=True)
-        if not result or not result["moves"]:
-            _pause()
-            return
-        if not ask("Apply these %d change(s) now?" % result["moved"], default=False):
-            return
-        applied = self._safe("apply", lambda: self.pipeline.apply_plan(
-            self.directory, dry_run=False, min_confidence=self.cfg.get("min_confidence")))
-        if applied is not None:
-            ok("Changed %d file(s). Log: apply-log.json" % applied["moved"])
         _pause()
 
     def rebuild_plan(self):
@@ -796,33 +776,86 @@ class App:
             _clear()
             self.header()
             print(_c("Settings", "1"))
-            print("  1  Vision model       (%s)" % self.cfg.get("vision_model"))
-            print("  2  Vision backend     (%s)" % self.cfg.get("vision_input"))
-            print("  3  Orchestrator model (%s)" % self.cfg.get("orchestrator_model"))
-            print("  4  Orchestrator backend (%s)" % self.cfg.get("orchestrator_input"))
-            print("  5  Workers            (%s)" % self.cfg.get("workers"))
-            print("  6  Render profile     (%s)" % self.cfg.get("profile"))
-            print("  7  Ollama host        (%s)" % self.host)
-            print("  8  Mode               (%s)" % self.cfg.get("mode"))
-            print("  9  Name template      (%s)" % self.cfg.get("name_template"))
-            print("  0  Preset            (%s)" % self.cfg.get("preset"))
-            print("  p  Prompts            (%d, per node)" % len(PROMPT_LABELS))
-            print("  s  Save settings      -> config.json")
+            print("  1  Document type / preset    (%s)" % self.cfg.get("preset"))
+            print("  2  Prompts                   (%d, per node)" % len(PROMPT_LABELS))
+            print("  3  Mode                      (%s)" % self.cfg.get("mode"))
+            print("  4  Name template             (%s)" % self.cfg.get("name_template"))
+            print("  5  Models & performance")
+            print("  6  Detection method          (%s)" % self.cfg.get("detect_method"))
+            print(_c("  ------ folder tools ------", "90"))
+            print("  7  Choose another directory  (%s)" % _shorten(self.directory, 30))
+            print("  8  Scan folder (manifest)")
+            print("  9  View catalog")
+            print("  r  Rebuild plan from catalog")
+            print("  c  Clean raster cache")
+            print(_c("  --------------------------", "90"))
+            print("  w  Save settings -> config.json")
             print("  b  Back")
             choice = input("> ").strip().lower()
             if choice == "b" or not choice:
                 return
-            if choice == "0":
+            if choice == "1":
                 self.choose_preset()
                 continue
-            if choice == "p":
+            if choice == "2":
                 self.edit_prompts()
                 continue
-            if choice == "s":
-                path = self.pipeline.save_config(self.cfg)
-                ok("Saved to %s" % path)
+            if choice == "5":
+                self.models_menu()
+                continue
+            if choice == "7":
+                self.choose_directory()
+                continue
+            if choice == "8":
+                self.scan()
+                continue
+            if choice == "9":
+                self.view_catalog()
+                continue
+            if choice == "r":
+                self.rebuild_plan()
+                continue
+            if choice == "c":
+                self.clean_cache()
+                continue
+            if choice == "w":
+                ok("Saved to %s" % self.pipeline.save_config(self.cfg))
                 _pause()
                 continue
+            if choice == "3":
+                print("modes: catalog (no changes), move (re-folder), rename (in place), rename-move (both)")
+                value = input("Mode: ").strip()
+                if value in ("catalog", "move", "rename", "rename-move"):
+                    self.cfg["mode"] = value
+            elif choice == "4":
+                print("fields: {title} {author} {year} {doc_type} {language} {topics}")
+                print("plus any custom field your vision prompt returns")
+                print("default: %s" % naming.DEFAULT_TEMPLATE)
+                value = input("Name template (empty resets to default): ").strip()
+                self.cfg["name_template"] = value or naming.DEFAULT_TEMPLATE
+                ok("Name template = %s" % self.cfg["name_template"])
+            elif choice == "6":
+                print("methods: model (always ask), auto (heuristics first), heuristic (no model)")
+                value = input("Detection method: ").strip()
+                if value in ("model", "auto", "heuristic"):
+                    self.cfg["detect_method"] = value
+
+    def models_menu(self):
+        while True:
+            _clear()
+            self.header()
+            print(_c("Models & performance", "1"))
+            print("  1  Vision model          (%s)" % self.cfg.get("vision_model"))
+            print("  2  Vision backend        (%s)" % self.cfg.get("vision_input"))
+            print("  3  Orchestrator model    (%s)" % self.cfg.get("orchestrator_model"))
+            print("  4  Orchestrator backend  (%s)" % self.cfg.get("orchestrator_input"))
+            print("  5  Workers               (%s)" % self.cfg.get("workers"))
+            print("  6  Render profile        (%s)" % self.cfg.get("profile"))
+            print("  7  Ollama host           (%s)" % self.host)
+            print("  b  Back")
+            choice = input("> ").strip().lower()
+            if choice == "b" or not choice:
+                return
             if choice == "1":
                 self.cfg["vision_model"] = input("Vision model: ").strip() or self.cfg["vision_model"]
             elif choice == "2":
@@ -848,18 +881,6 @@ class App:
                 self.cfg["ollama_host"] = input("Ollama host: ").strip() or self.host
                 self.host = self.cfg["ollama_host"]
                 self.reachable, self.models = ollama_reachable(self.host)
-            elif choice == "8":
-                print("modes: catalog (no changes), move (re-folder), rename (in place), rename-move (both)")
-                value = input("Mode: ").strip()
-                if value in ("catalog", "move", "rename", "rename-move"):
-                    self.cfg["mode"] = value
-            elif choice == "9":
-                print("fields: {title} {author} {year} {doc_type} {language} {topics}")
-                print("plus any custom field your vision prompt returns")
-                print("default: %s" % naming.DEFAULT_TEMPLATE)
-                value = input("Name template (empty resets to default): ").strip()
-                self.cfg["name_template"] = value or naming.DEFAULT_TEMPLATE
-                ok("Name template = %s" % self.cfg["name_template"])
 
     def edit_prompts(self):
         while True:
@@ -937,17 +958,9 @@ class App:
     def run(self):
         actions = {
             "0": self.yolo,
-            "1": self.auto_build,
-            "2": self.review_plan,
-            "3": self.apply_plan,
-            "4": self.view_catalog,
-            "5": self.scan,
-            "6": self.rebuild_plan,
-            "7": self.choose_preset,
-            "8": self.choose_directory,
-            "9": self.settings,
-            "c": self.clean_cache,
+            "1": self.guided_run,
             "u": self.undo_last,
+            "s": self.settings,
         }
         while True:
             _clear()

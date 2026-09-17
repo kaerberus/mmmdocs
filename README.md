@@ -61,29 +61,29 @@ mmmdocs --help     # list the scriptable subcommands
 ```
 
 On launch the TUI asks for a directory (tab-completes; **Enter keeps the last
-one**, persisted in `config.json`), then shows:
+one**, persisted in `config.json`), then shows only the four intents:
 
 ```
-  0  YOLO: detect, build and organize everything
-  1  Automatically detect & build plan
-  2  Review plan
-  3  Apply plan
-  4  View catalog
-  5  Scan folder (manifest, no model)
-  6  Rebuild plan from catalog (no model)
-  7  Document type / preset
-  8  Choose another directory
-  9  Settings                (mode, preset, prompts, models)
-  c  Clean raster cache
+  0  YOLO — auto-detect, build, and organize everything
+  1  Set up and run — guided
   u  Undo last apply
+  s  Settings
   q  Quit
 ```
 
 **0 = YOLO.** One keypress: it detects the document type, prints the exact
 settings it will use, asks a single `y/n`, then classifies and **renames/moves
 every file** (forced, including low-confidence ones). It finishes with a report
-and an undo hint; `u` restores the last run. Use `1` if you want to review the
-plan before applying.
+and an undo hint; `u` restores the last run.
+
+**1 = guided.** If a plan already exists it asks *"An old plan already exists —
+overwrite it with a fresh classification?"* (`N` reuses it: review & apply, no
+model spend). Otherwise it walks: confirm the detected document type → confirm
+the run → classify → review the `old -> new` list → `Apply now? [y/N]` (`f`
+forces, including flagged files). Nothing is moved until you confirm.
+
+Everything else (presets, prompts, mode, name template, models, detection,
+directory, scan, catalog, rebuild, cache) lives under **`s` Settings**.
 
 Prefer the shell? The same steps are scriptable:
 
@@ -202,10 +202,10 @@ stripped of trailing spaces/dots, and capped at 150 characters (extension kept).
 ## Custom prompts & other document types
 
 Each node has an editable instruction and system message, because small models are
-sensitive to wording. In the TUI: **Settings → p**. For each prompt it shows
+sensitive to wording. In the TUI: **Settings → 2 Prompts**. For each prompt it shows
 `old prompt:`, then `new prompt:` where **empty resets to the built-in default**,
 a typed line replaces it, and **`edit`** opens `$EDITOR` for multi-line editing.
-**Settings → s** saves to `<repo>/config.json`.
+**Settings → w** saves to `<repo>/config.json`.
 
 The same values are available from the CLI (empty string resets):
 
@@ -266,16 +266,16 @@ mmmdocs run "/path/to/docs" --preset wis      # force one
 
 In the TUI, choosing a folder runs detection and offers to switch
 (`Detected: Mercedes WIS service docs (model, 0.98) — switch preset? [Y/n]`), and
-**Settings → 0** is a preset picker showing each preset's label and resulting
+**Settings → 1 Document type / preset** is a picker showing each preset's label and resulting
 template. Because presets are just defaults, editing the prompt or template
 afterwards marks the preset `(customized)` and your edit wins.
 
 The detection prompt is editable too, like the other node prompts
-(`detection_prompt` / `detection_system_prompt` in **Settings → p**).
+(`detection_prompt` / `detection_system_prompt` in **Settings → 2 Prompts**).
 
 ### Create a preset in the TUI
 
-**Settings → 0 → n**, then two inputs:
+**Settings → 1 → n**, then two inputs:
 
 ```
 Preset name: WIS service docs
@@ -368,7 +368,7 @@ mmmdocs run /path/to/books --config my-config.json
 | `last_directory` | *(null)* | directory the TUI remembers between launches |
 
 Settings live in **`<repo>/config.json`** (not `$HOME`), so they travel with the
-folder. In the TUI, **Settings → p** edits prompts and **s** saves them; the file
+folder. In the TUI, **Settings → 2 Prompts** edits prompts and **Settings → w** saves them; the file
 is created with only the values you changed.
 
 ## Output files
