@@ -35,7 +35,7 @@ No install step. Clone it, then run it — on startup `mmmdocs` checks every
 dependency, offers to install whatever is missing, and drops you into a TUI.
 
 ```bash
-git clone <this repo> mmmdocs
+git clone https://github.com/kaerberus/mmmdocs
 cd mmmdocs
 python3 -m mmmdocs
 ```
