@@ -7,7 +7,7 @@ before anything is moved. Built for mixed shelves — scanned books, magazines,
 monographs, CJK scans, service/spec sheets — and small models: **one file is
 classified at a time**, so no model ever has to hold more than a single cover in
 its head. Runs against [Ollama](https://ollama.com) by default, so there are no
-API keys.
+API keys. TUI or CLI driven.
 
 ## Installation
 
