@@ -170,6 +170,56 @@ def build_from_fields(name, fields, separator=" - "):
     }
 
 
+def sanitize_fields(fields, cap=6):
+    """Slugify, de-duplicate and cap a proposed field list."""
+    out = []
+    for field in fields or []:
+        name = re.sub(r"[^a-z0-9_]+", "_", str(field).strip().lower()).strip("_")[:24]
+        if name and name not in out:
+            out.append(name)
+    return out[:cap]
+
+
+# "Label:" line starts commonly seen on structured documents.
+_LABEL_RE = re.compile(r"(?m)^[ \t]*([A-Z][A-Za-z0-9 /&.'#-]{2,29})\s*[:#]")
+_LABEL_MAP = {
+    "invoice number": "invoice_number", "invoice no": "invoice_number",
+    "invoice #": "invoice_number", "invoice date": "date", "date": "date",
+    "due date": "due_date", "total": "total", "total due": "total",
+    "amount due": "total", "amount": "amount", "vendor": "vendor",
+    "supplier": "vendor", "merchant": "vendor", "name": "name", "title": "title",
+    "author": "author", "subject": "subject", "model": "model", "serial": "serial",
+    "part number": "part_number", "drawing number": "drawing_number",
+    "project": "project", "client": "client", "company": "company",
+    "revision": "revision", "rev": "revision",
+}
+
+
+def _label_to_field(label):
+    key = re.sub(r"[^a-z0-9 ]+", " ", label.lower()).strip()
+    if key in _LABEL_MAP:
+        return _LABEL_MAP[key]
+    return re.sub(r"[^a-z0-9]+", "_", key).strip("_")[:24]
+
+
+def mine_fields(samples, min_ratio=0.3, cap=6):
+    """Candidate field names from frequent `Label:` lines across the samples."""
+    if not samples:
+        return []
+    counts = {}
+    for sample in samples:
+        seen = set()
+        for match in _LABEL_RE.finditer(sample.get("text") or ""):
+            field = _label_to_field(match.group(1))
+            if field and field not in seen:
+                seen.add(field)
+                counts[field] = counts.get(field, 0) + 1
+    threshold = max(1, int(len(samples) * min_ratio))
+    ranked = sorted(((f, c) for f, c in counts.items() if c >= threshold),
+                    key=lambda kv: (-kv[1], kv[0]))
+    return [f for f, _ in ranked[:cap]]
+
+
 def fields_from_prompt(prompt):
     """JSON keys found in a prompt, in order (for showing what's available)."""
     seen = []
@@ -253,8 +303,12 @@ def _backend_opts(cfg, backend):
     return {"host": cfg.get("ollama_host") or "http://localhost:11434"}
 
 
-def model_detect(samples, preset_map, cfg, scores=None):
-    """Ask the detection node to pick a preset. Raises on an unusable reply."""
+def model_detect(samples, preset_map, cfg, scores=None, mined=None):
+    """Ask the detection node to pick a preset or propose a schema.
+
+    Raises only when the reply is unusable (no valid preset and no proposed
+    fields), so callers can fall back to heuristics.
+    """
     from . import nodes, templates
 
     listing = [
@@ -266,74 +320,112 @@ def model_detect(samples, preset_map, cfg, scores=None):
     backend = cfg.get("detection_input") or cfg.get("orchestrator_input") or "ollama"
     model = (cfg.get("detection_model") or cfg.get("orchestrator_model")
              or cfg.get("vision_model"))
-    user = templates.build_detection_user(listing, samples, cfg.get("detection_prompt"), scores)
+    user = templates.build_detection_user(
+        listing, samples, cfg.get("detection_prompt"), scores, mined)
     raw = nodes.chat(
         backend, model,
         cfg.get("detection_system_prompt") or templates.DETECTION_SYSTEM,
         user, **_backend_opts(cfg, backend),
     )
     data = nodes.parse_json(raw)
+
     preset_id = str(data.get("preset") or "").strip()
     if preset_id not in preset_map:
         match = [name for name in preset_map if name.lower() == preset_id.lower()]
-        if not match:
-            raise ValueError("unknown preset %r" % preset_id)
-        preset_id = match[0]
+        preset_id = match[0] if match else ""
+
+    proposed = data.get("proposed") or {}
+    fields = sanitize_fields(proposed.get("fields"))
+    label = str(proposed.get("label") or "").strip()
+    proposal = {"label": label, "fields": fields} if fields else None
+
     try:
         confidence = float(data.get("confidence") or 0.0)
     except (TypeError, ValueError):
         confidence = 0.0
-    return {"preset": preset_id, "confidence": confidence, "reason": str(data.get("reason") or "")}
+    reason = str(data.get("reason") or "")
+    matched = bool(data.get("match", True)) and bool(preset_id) and not proposal
+
+    if not matched and not proposal:
+        raise ValueError("no valid preset and no proposed fields")
+    return {"preset": preset_id or None, "confidence": confidence, "reason": reason,
+            "match": matched, "proposed": proposal}
 
 
 def detect(directory, cfg):
-    """Detect the best preset for a folder. Returns a report dict."""
+    """Detect the best preset for a folder, or propose a schema when none fits.
+
+    Report keys: preset, match, confidence, method, reason, scores, and (when
+    match is False) a `proposed` {label, fields} draft.
+    """
     directory = os.path.abspath(directory)
     preset_map = cfg.get("_presets") or all_presets(cfg.get("presets"))
     names = _pdfs(directory)
     samples = digest(directory, max_files=int(cfg.get("detect_sample", 15)))
     scores = heuristic_scores(samples, preset_map)
     method = (cfg.get("detect_method") or "model").strip().lower()
+    allow_fields = bool(cfg.get("detect_fields", True))
+    min_match = float(cfg.get("detect_min_match", 0.5))
+    mined = mine_fields(samples) if allow_fields else []
     report = {
         "directory": directory,
         "files": len(names),
         "sampled": len(samples),
         "method": method,
         "scores": scores,
+        "mined": mined,
     }
+    chosen, confidence, reason = "books", 0.0, "no signal; default"
+    matched = False
+    model_proposal = None
 
     if method in ("model", "auto") and samples:
         if method == "auto" and scores:
             top = max(scores.items(), key=lambda kv: kv[1])
             if top[1] >= 0.6:
-                report.update(preset=top[0], confidence=top[1],
+                report.update(preset=top[0], match=True, confidence=top[1],
                               reason="heuristic match", method="heuristic")
                 return report
         try:
-            choice = model_detect(samples, preset_map, cfg, scores)
+            choice = model_detect(samples, preset_map, cfg, scores, mined)
             user_names = [n for n in preset_map if n not in BUILTIN_PRESETS]
             strong_user = sorted(
                 ((n, scores.get(n, 0.0)) for n in user_names if scores.get(n, 0.0) >= 0.6),
                 key=lambda kv: -kv[1],
             )
-            if choice["preset"] not in user_names and strong_user:
+            if choice["preset"] and choice["preset"] not in user_names and strong_user and choice["match"]:
                 best, score = strong_user[0]
-                report.update(
-                    preset=best, confidence=score, method="heuristic+user",
-                    reason="user preset %r matched %.0f%% of samples; model suggested %r"
-                           % (best, score * 100, choice["preset"]))
+                report.update(preset=best, match=True, confidence=score, method="heuristic+user",
+                              reason="user preset %r matched %.0f%% of samples; model suggested %r"
+                                     % (best, score * 100, choice["preset"]))
                 return report
-            report.update(preset=choice["preset"], confidence=choice["confidence"],
-                          reason=choice["reason"], method="model")
-            return report
+            chosen = choice["preset"] or "books"
+            confidence = choice["confidence"]
+            reason = choice["reason"]
+            model_proposal = choice["proposed"]
+            matched = choice["match"]
         except BaseException as exc:
             report["model_error"] = "%s: %s" % (type(exc).__name__, exc)
 
-    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-    if ranked and ranked[0][1] > 0:
-        report.update(preset=ranked[0][0], confidence=ranked[0][1],
-                      reason="heuristic match", method="heuristic")
-    else:
-        report.update(preset="books", confidence=0.0,
-                      reason="no signal; default", method="fallback")
+    # Fall back to heuristics when the model wasn't used or gave nothing usable.
+    if not matched and model_proposal is None:
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+        if ranked and ranked[0][1] > 0:
+            chosen = ranked[0][0]
+            confidence = ranked[0][1]
+            reason = "heuristic match"
+            method = "heuristic"
+            matched = True
+
+    # A generic built-in with no heuristic support is not a real match.
+    if matched and chosen in BUILTIN_PRESETS and scores.get(chosen, 0) == 0 and confidence < min_match:
+        matched = False
+
+    report.update(preset=chosen, match=matched, confidence=confidence,
+                  reason=reason, method=method)
+    if not matched and allow_fields:
+        fields = sanitize_fields((model_proposal or {}).get("fields", []) + mined)
+        if fields:
+            label = (model_proposal or {}).get("label") or "Schema for %s" % os.path.basename(directory)
+            report["proposed"] = {"label": label, "fields": fields}
     return report

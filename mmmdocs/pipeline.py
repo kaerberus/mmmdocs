@@ -59,6 +59,9 @@ DEFAULT_CONFIG = {
     "detection_model": None,           # None -> orchestrator_model
     "detect_method": "model",          # model | auto | heuristic
     "detect_sample": 15,
+    "detect_fields": True,             # allow detection to propose a schema
+    "detect_min_match": 0.5,           # below this a preset counts as "no match"
+    "yolo_schema": "auto",             # auto = use a proposed schema silently | ask
     # Document presets
     "preset": "books",                 # books | spec-sheet | magazines | <user> | auto | custom
     "presets": {},                     # user-defined presets (see config.example.json)

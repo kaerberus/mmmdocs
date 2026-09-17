@@ -67,24 +67,29 @@ Every input title must appear exactly once as a key. Use forward-slash paths. Ou
 
 DETECTION_SYSTEM = "You route a folder of documents to the best matching preset. You output only JSON."
 
-DETECTION_INSTRUCTION = """You are given a sample of documents from ONE folder. Choose the single best-matching preset from the list below.
+DETECTION_INSTRUCTION = """You are given a sample of documents from ONE folder. Choose the best-matching preset from the list below, or propose a new schema when none fits.
 
 Consider the file names and the sampled first-page text. Return ONLY JSON:
 {
-  "preset": "<id from the list>",
+  "preset": "<id from the list, or \\"\\">",
   "confidence": 0.0,
-  "reason": "one short sentence"
+  "reason": "one short sentence",
+  "match": true,
+  "proposed": {"label": "short human name", "fields": ["field_one", "field_two"]}
 }
 
 Rules:
-- "preset" must be exactly one id from the list.
+- If a preset fits, set "preset" to its id and "match": true.
+- If none genuinely fits, set "match": false, "preset": "", and fill "proposed" with
+  a short "label" and an ordered list of 2-6 short snake_case "fields" you would put
+  in a file name, most identifying first (e.g. ["vendor","invoice_number","date","total"]).
 - A preset marked "user_defined": true is purpose-built for this folder; prefer it when it fits.
 - "heuristic_score" is the fraction of sampled documents that matched that preset's signature. A high score is strong evidence.
 - Use "books" only if nothing else fits.
 - Output JSON only."""
 
 
-def build_detection_user(preset_list, digest_samples, instruction=None, scores=None):
+def build_detection_user(preset_list, digest_samples, instruction=None, scores=None, mined=None):
     if scores:
         for entry in preset_list:
             entry["heuristic_score"] = scores.get(entry["id"], 0.0)
@@ -93,8 +98,11 @@ def build_detection_user(preset_list, digest_samples, instruction=None, scores=N
         "### %s\n%s" % (s.get("name", ""), (s.get("text") or "(no text)")[:400])
         for s in digest_samples
     )
-    return "%s\n\n--- PRESETS ---\n%s\n\n--- SAMPLES ---\n%s" % (
-        instruction or DETECTION_INSTRUCTION, listing, samples)
+    hint = ""
+    if mined:
+        hint = "\n\n--- FREQUENT LABELS FOUND ---\n" + ", ".join(mined)
+    return "%s\n\n--- PRESETS ---\n%s\n\n--- SAMPLES ---\n%s%s" % (
+        instruction or DETECTION_INSTRUCTION, listing, samples, hint)
 
 
 def build_classify_user(path, info, text_excerpt, image_pages, instruction=None):

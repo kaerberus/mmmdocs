@@ -267,6 +267,20 @@ mmmdocs run "/path/to/docs" --preset auto        # detect, then apply
 mmmdocs run "/path/to/docs" --preset invoices    # force one
 ```
 
+**When nothing fits, detection proposes a schema.** Alongside the preset it can
+return a `label` and an ordered field list (frequent `Label:` lines are mined from
+the sample too), and mmmdocs builds the filename template *and* the JSON prompt
+from that list — the same generator as the TUI preset builder. So a folder of a
+novel document type gets a real schema instead of a wrong built-in:
+
+- **Guided (1)** shows `Proposed schema: {supplier} - {date} - {order_number}` and
+  offers `[Enter] use proposed`, `e edit & save` (opens the prefilled builder),
+  `p pick`, `n new`.
+- **YOLO (0)** builds it silently for that run and **never writes `config.json`**
+  (it stays ephemeral); set `yolo_schema: ask` to review/save it instead.
+- Turn the behaviour off with `detect_fields: false`; a chosen preset with no
+  heuristic support and confidence below `detect_min_match` counts as "no match".
+
 Because presets are just defaults, editing the prompt or template afterwards marks
 the preset `(customized)` and your edit wins.
 
@@ -372,6 +386,9 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | `detection_input` / `detection_model` | *(null)* | node used for detection (default: orchestrator) |
 | `detect_method` | `model` | `model`, `auto`, or `heuristic` |
 | `detect_sample` | `15` | files sampled during detection |
+| `detect_fields` | `true` | let detection propose a schema when nothing fits |
+| `detect_min_match` | `0.5` | confidence below which a preset counts as "no match" |
+| `yolo_schema` | `auto` | YOLO uses a proposed schema (`auto`) or opens the builder (`ask`) |
 | `preset` | `books` | active preset, or `auto`, or `custom` |
 | `presets` | `{}` | user-defined presets (see `config.example.json`) |
 | `last_directory` | *(null)* | directory the TUI remembers between launches |

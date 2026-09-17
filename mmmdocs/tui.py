@@ -313,7 +313,13 @@ class App:
             return names[int(choice) - 1]
         return None
 
-    def _new_preset(self):
+    def _new_preset(self, prefill=None):
+        if prefill and prefill.get("fields"):
+            draft = self.pipeline.preset_lib.build_from_fields(
+                prefill.get("label") or "Custom schema", prefill["fields"])
+            if draft:
+                self._preset_accept(draft, is_new=True)
+                return
         _clear()
         self.header()
         print(_c("New preset", "1"))
@@ -330,6 +336,17 @@ class App:
             return
         draft = self.pipeline.preset_lib.build_from_fields(name, fields)
         self._preset_accept(draft, is_new=True)
+
+    def _apply_ephemeral(self, draft, pid):
+        """Use a generated preset for this run without writing config.json."""
+        preset_map = dict(self.cfg.get("_presets") or self._preset_map())
+        preset_map[pid] = draft
+        self.cfg["_presets"] = preset_map
+        self.cfg["preset"] = pid
+        self.cfg["vision_prompt"] = draft.get("vision_prompt")
+        self.cfg["vision_system_prompt"] = draft.get("vision_system_prompt")
+        self.cfg["name_template"] = draft.get("name_template") or naming.DEFAULT_TEMPLATE
+        self.cfg["mode"] = draft.get("mode", "rename")
 
     def _edit_preset(self):
         _clear()
@@ -545,7 +562,30 @@ class App:
         current = self.cfg.get("preset")
         preset_map = self._preset_map()
         detected = preset_map.get(chosen) or {}
-        if chosen != current:
+        proposed = report.get("proposed") if not report.get("match", True) else None
+        if proposed:
+            fields = proposed.get("fields") or []
+            label = proposed.get("label") or "Custom schema"
+            draft = self.pipeline.preset_lib.build_from_fields(label, fields)
+            print("\nNo preset fits well. Proposed schema: %s" % draft.get("name_template"))
+            print("  label:  %s" % label)
+            print("  fields: %s" % ", ".join(fields))
+            if report.get("reason"):
+                print(_c("  %s %s" % (report.get("method"), report.get("reason")), "90"))
+            choice = input("[Enter] use proposed   e edit & save   p pick   n new (blank)   k keep current: ").strip().lower()
+            if choice == "e":
+                self._new_preset(prefill={"label": label, "fields": fields})
+            elif choice == "p":
+                self.choose_preset()
+            elif choice == "n":
+                self._new_preset()
+            elif choice == "k":
+                pass
+            else:
+                pid = self.pipeline.preset_lib.make_id(label)
+                self._apply_ephemeral(draft, pid)
+                ok("Using generated schema: %s" % draft.get("name_template"))
+        elif chosen != current:
             cur = preset_map.get(current) or {}
             print("\nDetected: %s [%s]   template: %s" % (
                 detected.get("label", chosen), chosen,
@@ -606,7 +646,18 @@ class App:
         if report is None:
             return
         chosen = report.get("preset") or "books"
-        self._apply_preset(chosen)
+        proposed = report.get("proposed") if not report.get("match", True) else None
+        if proposed and self.cfg.get("yolo_schema", "auto") == "ask":
+            self._new_preset(prefill=proposed)
+            chosen = self.cfg.get("preset") or chosen
+        elif proposed:
+            label = proposed.get("label") or "Custom schema"
+            draft = self.pipeline.preset_lib.build_from_fields(label, proposed.get("fields") or [])
+            pid = self.pipeline.preset_lib.make_id(label)
+            self._apply_ephemeral(draft, pid)
+            chosen = pid
+        else:
+            self._apply_preset(chosen)
         body = self._preset_map().get(chosen) or {}
         count = self._pdf_count()
         print(_c("\nYOLO", "1;33"))
@@ -917,7 +968,7 @@ class App:
         while True:
             _clear()
             self.header()
-            print(_c("Prompts", "1") + _c("  (empty = reset, 'edit' = $EDITOR)", "90"))
+            print(_c("Prompts", "1") + _c("  (Enter = reset to default, type 'edit' to open in $EDITOR)", "90"))
             for i, (key, label, _default) in enumerate(PROMPT_LABELS, 1):
                 state = "custom" if self.cfg.get(key) else "default"
                 print("  %d  %-24s (%s)" % (i, label, state))
@@ -936,7 +987,7 @@ class App:
             print("  %s" % line)
         if len(current) > 2400:
             print("  ... (%d chars total)" % len(current))
-        value = input(_c("\nnew prompt: ", "1")).strip()
+        value = input(_c("\nnew prompt (type 'edit' to open in $EDITOR, or Enter to reset): ", "1")).strip()
         if not value:
             self.cfg[key] = None
             ok("Reset %s to default" % label)
