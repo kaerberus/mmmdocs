@@ -10,8 +10,9 @@ its head. Runs against [Ollama](https://ollama.com) by default, so there are no
 API keys.
 
 ```bash
-git clone https://github.com/kaerberus/mmmdocs && cd mmmdocs && python3 -m mmmdocs
-# then press 0 (YOLO) or 1 (guided)
+curl -fsSL https://raw.githubusercontent.com/kaerberus/mmmdocs/main/install.sh | bash
+cd /path/to/your/pdfs && mmmdocs
+# 0 = YOLO, 1 = guided, 2 = change directory
 ```
 
 ---
@@ -45,7 +46,8 @@ git clone https://github.com/kaerberus/mmmdocs && cd mmmdocs && python3 -m mmmdo
 curl -fsSL https://raw.githubusercontent.com/kaerberus/mmmdocs/main/install.sh | bash
 ```
 
-Then `mmmdocs`. Re-run it any time to update. Env overrides:
+Then `cd` into a folder of PDFs and run `mmmdocs` — it opens on that folder.
+Re-run the installer any time to update. Env overrides:
 `MMMDOCS_DIR`, `MMMDOCS_BRANCH`, `PYTHON`, and `MMMDOCS_PULL_MODEL=1` to also pull
 `embeddinggemma`.
 
@@ -68,8 +70,8 @@ Optional: `export PATH="$PWD/bin:$PATH"` to call `mmmdocs` instead of
 
 ## The TUI
 
-On launch it asks for a directory — **tab-completes**, and **Enter keeps the last
-one** (persisted in `config.json`). Then it shows only four intents:
+The TUI **opens on the directory you launched it from** (so `cd` where your PDFs
+are, then run `mmmdocs`); option `2` changes it, with tab-completion. It shows:
 
 ```
 mmmdocs — /path/to/docs   (79 PDFs)
@@ -79,6 +81,7 @@ mmmdocs — /path/to/docs   (79 PDFs)
 
   0  YOLO — auto-detect, build, and organize everything
   1  Set up and run — guided
+  2  Change directory   (/path/to/docs)
   u  Undo last apply
   s  Settings
   q  Quit
@@ -136,10 +139,9 @@ Everything secondary lives here:
   5  Models & performance      -> vision/orchestrator, workers, profile, host
   6  Detection method          (model)
   ------ folder tools ------
-  7  Choose another directory
-  8  Scan folder (manifest)
-  9  View catalog
-  r  Rebuild plan from catalog
+  7  Scan folder (manifest)
+  8  View catalog
+  9  Rebuild plan from catalog
   c  Clean raster cache
   --------------------------
   w  Save settings -> config.json
@@ -438,7 +440,7 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | `scan_classifier` / `detect_vision` | *(null)* / `false` | optional VL classifier for text-less covers |
 | `preset` | `books` | active preset, or `auto`, or `custom` |
 | `presets` | `{}` | user-defined presets (see `config.example.json`) |
-| `last_directory` | *(null)* | directory the TUI remembers between launches |
+
 
 ## Output files
 

@@ -78,7 +78,6 @@ DEFAULT_CONFIG = {
     # Document presets
     "preset": "books",                 # books | spec-sheet | magazines | <user> | auto | custom
     "presets": {},                     # user-defined presets (see config.example.json)
-    "last_directory": None,            # remembered by the TUI
 }
 
 

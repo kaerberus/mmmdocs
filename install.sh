@@ -93,7 +93,7 @@ fi
 
 say "Done."
 echo
-echo "  mmmdocs            # interactive TUI"
-echo "  mmmdocs --help     # commands"
+echo "  cd /path/to/pdfs && mmmdocs   # opens that folder in the TUI"
+echo "  mmmdocs --help                # commands"
 echo
 echo "First run checks Ollama and offers to pull gemma4:e4b (the vision model)."

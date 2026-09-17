@@ -155,9 +155,8 @@ class App:
         from . import pipeline
         self.pipeline = pipeline
         self.cfg = _apply_cli_overrides(argv, pipeline.load_config(_config_path(argv)))
-        last = self.cfg.get("last_directory")
-        cwd = os.path.abspath(os.getcwd())
-        self.directory = os.path.abspath(os.path.expanduser(last)) if last and os.path.isdir(os.path.expanduser(last)) else cwd
+        # Open on the directory you launched from; change it with menu item 2.
+        self.directory = os.path.abspath(os.getcwd())
         self.host = self.cfg.get("ollama_host") or "http://localhost:11434"
         with progress.Spinner("Checking Ollama"):
             self.reachable, self.models = ollama_reachable(self.host)
@@ -207,6 +206,7 @@ class App:
     def menu(self):
         print("  0  YOLO — auto-detect, build, and organize everything")
         print("  1  Set up and run — guided")
+        print("  2  Change directory   (%s)" % _shorten(self.directory, 40))
         print("  u  Undo last apply")
         print("  s  Settings")
         print("  q  Quit")
@@ -488,7 +488,7 @@ class App:
             warn("Ollama is offline; classification will not work.")
         self.prompt_directory()
         print(_c("  preset: %s  |  model: %s" % (self.cfg.get("preset"), self.cfg.get("vision_model")), "90"))
-        print(_c("  0 = YOLO (detect, build, organize)   ·   1 = set up and run (guided)\n", "90"))
+        print(_c("  opening in the current directory — 0 = YOLO, 1 = guided, 2 = change directory\n", "90"))
 
     def prompt_directory(self):
         while True:
@@ -496,12 +496,6 @@ class App:
             path = os.path.abspath(os.path.expanduser(raw)) if raw else self.directory
             if os.path.isdir(path):
                 self.directory = path
-                if self.cfg.get("last_directory") != path:
-                    self.cfg["last_directory"] = path
-                    try:
-                        self.pipeline.save_config(self.cfg)
-                    except Exception:
-                        pass
                 return path
             warn("Not a directory: %s" % path)
 
@@ -959,10 +953,9 @@ class App:
             print("  5  Models & performance")
             print("  6  Detection method          (%s)" % self.cfg.get("detect_method"))
             print(_c("  ------ folder tools ------", "90"))
-            print("  7  Choose another directory  (%s)" % _shorten(self.directory, 30))
-            print("  8  Scan folder (manifest)")
-            print("  9  View catalog")
-            print("  r  Rebuild plan from catalog")
+            print("  7  Scan folder (manifest)")
+            print("  8  View catalog")
+            print("  9  Rebuild plan from catalog")
             print("  c  Clean raster cache")
             print(_c("  --------------------------", "90"))
             print("  w  Save settings -> config.json")
@@ -980,15 +973,12 @@ class App:
                 self.models_menu()
                 continue
             if choice == "7":
-                self.choose_directory()
-                continue
-            if choice == "8":
                 self.scan()
                 continue
-            if choice == "9":
+            if choice == "8":
                 self.view_catalog()
                 continue
-            if choice == "r":
+            if choice == "9":
                 self.rebuild_plan()
                 continue
             if choice == "c":
@@ -1136,6 +1126,7 @@ class App:
         actions = {
             "0": self.yolo,
             "1": self.guided_run,
+            "2": self.choose_directory,
             "u": self.undo_last,
             "s": self.settings,
         }

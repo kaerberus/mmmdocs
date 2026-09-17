@@ -41,6 +41,7 @@
   "scan_classifier": null,
   "detect_vision": false,
   "preset": "books",
+  "_comment_run": "The TUI always opens on the directory you launch it from.",
 
   "_comment_presets": "Add your own document presets here. They appear in the TUI preset picker (Settings -> 1) and in detection. The 'invoices' entry is a worked example; the TUI can generate one for you from a name + field list.",
   "presets": {
