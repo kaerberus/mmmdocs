@@ -27,6 +27,8 @@ def _apply_overrides(cfg, args):
         ("orchestrator_system_prompt", "orchestrator_system_prompt"),
         ("preset", "preset"),
         ("detect_method", "detect_method"),
+        ("embed_model", "embed_model"),
+        ("scan_method", "scan_method"),
     ):
         value = getattr(args, flag, None)
         if value is not None:
@@ -101,6 +103,30 @@ def cmd_detect(args):
     with progress.Spinner("Detecting"):
         report = presets.detect(args.dir, cfg)
     print(json.dumps(report, indent=2, ensure_ascii=False))
+
+
+def cmd_scan(args):
+    cfg = _load(args)
+    if getattr(args, "limit", None):
+        cfg["scan_max"] = args.limit
+    with progress.Spinner("Scanning"):
+        report = presets.embed_scan(args.dir, cfg)
+    path = presets.save_scan_groups(args.dir, report)
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return
+    print("embedded %d/%d files (%d with no text) using %s"
+          % (report["embedded"], report["files"], report["no_text"], report["embed_model"]))
+    print("mixed folder: %s   clusters: %d" % (report["mixed"], len(report["clusters"])))
+    for group in report["groups"]:
+        fields = ",".join(group["fields"]) if group["fields"] else "-"
+        print("  %-28s %5d  preset=%s  fields=%s"
+              % (group["label"][:28], group["count"], group["preset"] or "-", fields))
+    if report["duplicates"]:
+        print("near-duplicates: %d pair(s)" % len(report["duplicates"]))
+    if report["outliers"]:
+        print("outliers: %d" % len(report["outliers"]))
+    print("groups written to %s" % path)
 
 
 def cmd_run(args):
@@ -208,6 +234,8 @@ def _add_model_flags(p):
     p.add_argument("--profile", choices=sorted(engine.PROFILES.keys()))
     p.add_argument("--workers", type=int)
     p.add_argument("--cache-root")
+    p.add_argument("--embed-model")
+    p.add_argument("--scan-method", dest="scan_method", choices=["auto", "embedding", "model"])
 
 
 def _add_organize_flags(p):
@@ -308,6 +336,13 @@ def build_parser():
     _add_model_flags(p)
     _add_preset_flag(p)
     p.set_defaults(func=cmd_detect)
+
+    p = sub.add_parser("scan", help="fast embedding scan: clusters, mixed groups, duplicates")
+    p.add_argument("dir")
+    p.add_argument("--limit", type=int, help="max files to embed (default: all)")
+    p.add_argument("--json", action="store_true", help="print the full JSON report")
+    _add_model_flags(p)
+    p.set_defaults(func=cmd_scan)
 
     p = sub.add_parser("bench", help="compare vision models on a sample of files")
     p.add_argument("dir")

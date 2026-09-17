@@ -87,6 +87,46 @@ def chat(backend, model, system, user_text, image_paths=None, **opts):
     return ollama_chat(model, system, user_text, image_paths, **opts)
 
 
+def _normalize(vec):
+    norm = sum(v * v for v in vec) ** 0.5
+    return [v / norm for v in vec] if norm else list(vec)
+
+
+def ollama_embed(model, texts, host="http://localhost:11434", timeout=300):
+    """Batch embeddings via Ollama's /api/embed. Returns unit-normalized vectors."""
+    out = _post_json(host.rstrip("/") + "/api/embed",
+                     {"model": model, "input": list(texts)}, timeout=timeout)
+    vectors = out.get("embeddings")
+    if vectors is None and "embedding" in out:
+        vectors = [out["embedding"]]
+    if not vectors or len(vectors) != len(texts):
+        raise ModelError("embedding count mismatch from %s" % model)
+    return [_normalize(v) for v in vectors]
+
+
+def openai_embed(model, texts, base_url="https://api.deepseek.com/v1",
+                 api_key=None, timeout=300):
+    if not api_key:
+        raise ModelError("embeddings require an API key")
+    out = _post_json(base_url.rstrip("/") + "/embeddings",
+                     {"model": model, "input": list(texts)},
+                     {"Authorization": "Bearer " + api_key}, timeout)
+    data = sorted(out.get("data", []), key=lambda d: d.get("index", 0))
+    if len(data) != len(texts):
+        raise ModelError("embedding count mismatch from %s" % model)
+    return [_normalize(d["embedding"]) for d in data]
+
+
+def embed(backend, model, texts, **opts):
+    """Dispatch batch embeddings to the configured backend."""
+    texts = list(texts)
+    if not texts:
+        return []
+    if backend == "openai":
+        return openai_embed(model, texts, **opts)
+    return ollama_embed(model, texts, **opts)
+
+
 def parse_json(text):
     """Parse a JSON object from a model reply, tolerating code fences/prose."""
     if not text or not text.strip():

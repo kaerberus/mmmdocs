@@ -184,6 +184,7 @@ Run `mmmdocs <command> --help` for the full flag list.
 | `plan DIR` | Rebuild `move-plan.json` from an existing `catalog.json` — **no model calls**. `--preset`, `--mode`, `--name-template`. |
 | `presets` | List built-in and user-defined presets. |
 | `detect DIR` | Suggest the best preset for a folder. `--detect-method model\|auto\|heuristic`. |
+| `scan DIR` | Fast embedding scan: clusters, mixed groups, near-duplicates, outliers. `--limit N`, `--json`. |
 | `bench DIR` | Compare vision models. `--vision-models a,b,c`, `--sample N`. |
 | `apply DIR` | Apply `move-plan.json` (rename and/or move). Dry-run unless `--yes`; `--force`, `--min-confidence X`. |
 | `undo DIR` | Reverse the last apply. Dry-run unless `--yes`. |
@@ -283,6 +284,33 @@ novel document type gets a real schema instead of a wrong built-in:
 
 Because presets are just defaults, editing the prompt or template afterwards marks
 the preset `(customized)` and your edit wins.
+
+## Fast scan (embeddings)
+
+Large, uncategorized folders get a cheap qualitative pass before anything
+expensive. mmmdocs embeds each document's first-page text with a small embedding
+model and reasons over the vectors:
+
+```bash
+ollama pull embeddinggemma        # ~300M, multilingual; default embed_model
+mmmdocs scan "/path/to/docs"      # clusters, mixed groups, dupes, outliers
+mmmdocs scan "/path/to/docs" --limit 500 --json
+```
+
+- **Clusters** files with pure-Python leader clustering (cosine), **assigns
+  presets** by nearest centroid, and flags a **mixed** folder when several groups
+  are substantial.
+- Flags **near-duplicates** and **outliers**, and writes `scan-groups.json` with
+  each group's file list (so it's actionable without per-group runs yet).
+- Feeds the generative detector a **cluster-stratified sample** instead of a fixed
+  stride, so minority types aren't missed.
+
+In the TUI, guided run (`1`) asks *"Are all documents in this directory similarly
+structured (all books / all papers / all magazines)?"*. If not, it scans, shows
+the groups, and can process the dominant group now. YOLO (`0`) scans and **stops**
+on a mixed folder rather than applying one schema across incompatible types.
+`scan_method: auto` uses embeddings when the model is available and falls back to
+the model-only path otherwise.
 
 ## Custom prompts & other document types
 
@@ -389,6 +417,14 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | `detect_fields` | `true` | let detection propose a schema when nothing fits |
 | `detect_min_match` | `0.5` | confidence below which a preset counts as "no match" |
 | `yolo_schema` | `auto` | YOLO uses a proposed schema (`auto`) or opens the builder (`ask`) |
+| `scan_method` | `auto` | `auto`, `embedding`, or `model` for the fast scan |
+| `embed_input` / `embed_model` | `ollama` / `embeddinggemma` | embedding backend and model |
+| `embed_batch` | `64` | texts per embedding request |
+| `scan_max` | `0` | max files to embed (`0` = all) |
+| `cluster_threshold` / `merge_threshold` | `0.7` / `0.75` | cosine to join a cluster / to merge two clusters |
+| `max_clusters` | `24` | cluster cap |
+| `dup_threshold` / `outlier_threshold` | `0.95` / `0.55` | near-duplicate and outlier cosine cutoffs |
+| `scan_classifier` / `detect_vision` | *(null)* / `false` | optional VL classifier for text-less covers |
 | `preset` | `books` | active preset, or `auto`, or `custom` |
 | `presets` | `{}` | user-defined presets (see `config.example.json`) |
 | `last_directory` | *(null)* | directory the TUI remembers between launches |

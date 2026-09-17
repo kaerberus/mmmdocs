@@ -62,6 +62,19 @@ DEFAULT_CONFIG = {
     "detect_fields": True,             # allow detection to propose a schema
     "detect_min_match": 0.5,           # below this a preset counts as "no match"
     "yolo_schema": "auto",             # auto = use a proposed schema silently | ask
+    # Fast embedding scan (qualitative look at large folders)
+    "scan_method": "auto",             # auto | embedding | model
+    "embed_input": "ollama",           # ollama | openai
+    "embed_model": "embeddinggemma",
+    "embed_batch": 64,
+    "scan_max": 0,                     # 0 = embed every file, else cap
+    "cluster_threshold": 0.70,         # cosine to join a cluster
+    "merge_threshold": 0.75,           # cosine to merge two clusters
+    "max_clusters": 24,
+    "dup_threshold": 0.95,             # cosine that flags near-duplicates
+    "outlier_threshold": 0.55,         # best cosine below this flags an outlier
+    "scan_classifier": None,           # optional VL classifier for no-text files
+    "detect_vision": False,            # render covers for text-less scan samples
     # Document presets
     "preset": "books",                 # books | spec-sheet | magazines | <user> | auto | custom
     "presets": {},                     # user-defined presets (see config.example.json)

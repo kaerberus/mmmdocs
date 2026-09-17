@@ -303,6 +303,267 @@ def _backend_opts(cfg, backend):
     return {"host": cfg.get("ollama_host") or "http://localhost:11434"}
 
 
+# --------------------------------------------------------------------------- #
+# fast embedding scan (pure Python; no extra dependencies)
+# --------------------------------------------------------------------------- #
+
+def _cosine(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _unit_mean(vectors):
+    dim = len(vectors[0])
+    out = [0.0] * dim
+    for vec in vectors:
+        for i in range(dim):
+            out[i] += vec[i]
+    norm = sum(v * v for v in out) ** 0.5
+    return [v / norm for v in out] if norm else out
+
+
+def _assign_all(vectors, clusters):
+    assign = []
+    for vec in vectors:
+        best_i, best_s = 0, -1.0
+        for i, cluster in enumerate(clusters):
+            score = _cosine(vec, cluster["centroid"])
+            if score > best_s:
+                best_i, best_s = i, score
+        assign.append(best_i)
+    return assign
+
+
+def _refine_clusters(vectors, clusters, merge_threshold=0.75):
+    """Merge near-identical centroids and absorb singleton clusters, so short or
+    varied first-page text doesn't shatter into many tiny groups."""
+    changed = True
+    while changed and len(clusters) > 1:
+        changed = False
+        best_i = best_j = -1
+        best_s = -1.0
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                score = _cosine(clusters[i]["centroid"], clusters[j]["centroid"])
+                if score > best_s:
+                    best_i, best_j, best_s = i, j, score
+        if best_s >= merge_threshold:
+            clusters[best_i]["members"] += clusters[best_j]["members"]
+            clusters[best_i]["centroid"] = _unit_mean(
+                [vectors[m] for m in clusters[best_i]["members"]])
+            del clusters[best_j]
+            changed = True
+    if len(clusters) > 1:
+        multi = [c for c in clusters if len(c["members"]) > 1]
+        singles = [c for c in clusters if len(c["members"]) == 1]
+        for single in singles:
+            vec = vectors[single["members"][0]]
+            best, best_s = None, -1.0
+            for cluster in multi:
+                score = _cosine(vec, cluster["centroid"])
+                if score > best_s:
+                    best, best_s = cluster, score
+            if best is not None:
+                best["members"].append(single["members"][0])
+                best["centroid"] = _unit_mean([vectors[m] for m in best["members"]])
+            else:
+                multi.append(single)
+        clusters = multi
+    return clusters
+
+
+def _leader_cluster(vectors, threshold=0.80, max_clusters=24):
+    """Online leader clustering: join the nearest centroid above `threshold`,
+    otherwise start a new cluster. Deterministic in input order."""
+    clusters = []  # {"centroid": vec, "members": [idx into vectors]}
+    assign = []
+    for idx, vec in enumerate(vectors):
+        best_i, best_s = -1, -1.0
+        for i, cluster in enumerate(clusters):
+            score = _cosine(vec, cluster["centroid"])
+            if score > best_s:
+                best_i, best_s = i, score
+        if best_i >= 0 and best_s >= threshold:
+            cluster = clusters[best_i]
+            cluster["members"].append(idx)
+            cluster["centroid"] = _unit_mean([vectors[m] for m in cluster["members"]])
+            assign.append(best_i)
+        elif len(clusters) < max_clusters:
+            clusters.append({"centroid": list(vec), "members": [idx]})
+            assign.append(len(clusters) - 1)
+        else:
+            clusters[best_i]["members"].append(idx)
+            assign.append(best_i)
+    return clusters, assign
+
+
+def _preset_proto(body, name):
+    keywords = " ".join((body.get("detect") or {}).get("keywords", []) or [])
+    return "%s. %s. template %s. %s" % (
+        body.get("label", name), body.get("description", ""),
+        body.get("name_template", ""), keywords)
+
+
+def _embed_opts(cfg, backend):
+    if backend == "openai":
+        return {"base_url": cfg.get("openai_base_url") or "https://api.deepseek.com/v1",
+                "api_key": cfg.get("openai_api_key")}
+    return {"host": cfg.get("ollama_host") or "http://localhost:11434"}
+
+
+def embed_scan(directory, cfg):
+    """Cheap qualitative scan: embed first-page text, cluster, and match presets.
+
+    Returns a report with clusters, a `mixed` flag, `groups`, duplicates,
+    outliers, and a cluster-stratified `sample` for the generative detector.
+    Raises if the embedding model is unavailable (callers fall back).
+    """
+    from collections import Counter
+    from . import nodes
+
+    directory = os.path.abspath(directory)
+    preset_map = cfg.get("_presets") or all_presets(cfg.get("presets"))
+    names = _pdfs(directory)
+    limit = int(cfg.get("scan_max") or 0)
+    if limit and len(names) > limit:
+        step = len(names) / float(limit)
+        names = [names[int(i * step)] for i in range(limit)]
+
+    texts = []
+    for name in names:
+        try:
+            texts.append(engine.text_data(os.path.join(directory, name), pages="1",
+                                          max_chars=800).get("text", ""))
+        except BaseException:
+            texts.append("")
+    no_text = sum(1 for t in texts if not t.strip())
+
+    backend = cfg.get("embed_input") or "ollama"
+    model = cfg.get("embed_model") or "embeddinggemma"
+    batch = max(1, int(cfg.get("embed_batch") or 64))
+    opts = _embed_opts(cfg, backend)
+
+    vectors = [None] * len(names)
+    todo = [i for i, t in enumerate(texts) if t.strip()]
+    for start in range(0, len(todo), batch):
+        chunk = todo[start:start + batch]
+        for i, vec in zip(chunk, nodes.embed(backend, model, [texts[i] for i in chunk], **opts)):
+            vectors[i] = vec
+
+    valid = [(i, vectors[i]) for i in range(len(names)) if vectors[i] is not None]
+    report = {
+        "directory": directory,
+        "files": len(names),
+        "embedded": len(valid),
+        "no_text": no_text,
+        "embed_model": model,
+        "clusters": [],
+        "mixed": False,
+        "groups": [],
+        "duplicates": [],
+        "outliers": [],
+        "sample": [],
+    }
+    if not valid:
+        return report
+
+    vecs = [v for _, v in valid]
+    clusters, _assign = _leader_cluster(
+        vecs, float(cfg.get("cluster_threshold", 0.70)), int(cfg.get("max_clusters", 24)))
+    clusters = _refine_clusters(vecs, clusters, float(cfg.get("merge_threshold", 0.75)))
+    assign = _assign_all(vecs, clusters)
+
+    proto_names = list(preset_map)
+    proto_vecs = nodes.embed(backend, model,
+                             [_preset_proto(preset_map[n], n) for n in proto_names], **opts)
+    file_preset, file_score = [], []
+    for vec in vecs:
+        best_j, best_s = -1, -1.0
+        for j, pv in enumerate(proto_vecs):
+            score = _cosine(vec, pv)
+            if score > best_s:
+                best_j, best_s = j, score
+        file_preset.append(proto_names[best_j] if best_j >= 0 else None)
+        file_score.append(best_s)
+
+    cluster_reports = []
+    for ci, cluster in enumerate(clusters):
+        members = cluster["members"]
+        preset_counts = Counter(file_preset[m] for m in members if file_preset[m])
+        dominant, conf = (preset_counts.most_common(1)[0] if preset_counts else (None, 0.0))
+        cohesion = sum(_cosine(vecs[m], cluster["centroid"]) for m in members) / len(members)
+        cluster_reports.append({
+            "id": ci,
+            "size": len(members),
+            "dominant_preset": dominant,
+            "preset_confidence": round(conf / len(members), 3),
+            "cohesion": round(cohesion, 3),
+            "examples": [names[valid[m][0]] for m in members[:5]],
+            "members": [valid[m][0] for m in members],
+        })
+    cluster_reports.sort(key=lambda c: -c["size"])
+    report["clusters"] = cluster_reports
+
+    big = [c for c in cluster_reports if c["size"] >= max(2, int(0.1 * len(vecs)))]
+    # Multiple clusters alone don't mean "mixed": a single document type often
+    # varies enough to split. It's mixed only when substantial groups map to
+    # different presets (or some match none).
+    types = {(c["dominant_preset"] or "?") for c in big}
+    report["mixed"] = len(big) >= 2 and len(types) > 1
+
+    for group_no, cluster in enumerate(cluster_reports, 1):
+        fields = mine_fields([{"name": names[i], "text": texts[i]}
+                              for i in cluster["members"][:12]])
+        body = preset_map.get(cluster["dominant_preset"]) or {}
+        report["groups"].append({
+            "label": body.get("label") or "Group %d" % group_no,
+            "preset": cluster["dominant_preset"],
+            "count": cluster["size"],
+            "fields": fields,
+            "files": [names[i] for i in cluster["members"]],
+        })
+
+    dup_threshold = float(cfg.get("dup_threshold", 0.95))
+    for cluster in clusters:
+        members = cluster["members"]
+        for a in range(len(members)):
+            for b in range(a + 1, len(members)):
+                if _cosine(vecs[members[a]], vecs[members[b]]) >= dup_threshold:
+                    report["duplicates"].append([names[valid[members[a]][0]],
+                                                 names[valid[members[b]][0]]])
+        if len(report["duplicates"]) >= 200:
+            break
+
+    outlier_threshold = float(cfg.get("outlier_threshold", 0.55))
+    for k, (i, vec) in enumerate(valid):
+        if _cosine(vec, clusters[assign[k]]["centroid"]) < outlier_threshold:
+            report["outliers"].append(names[i])
+
+    want = max(1, int(cfg.get("detect_sample", 15)))
+    per = max(1, want // max(1, len(clusters)))
+    for cluster in clusters:
+        for m in cluster["members"][:per]:
+            i = valid[m][0]
+            report["sample"].append({"name": names[i], "text": texts[i]})
+    return report
+
+
+def save_scan_groups(root, report):
+    """Write the scan's groups (file lists) next to the folder for later use."""
+    payload = {
+        "directory": report.get("directory"),
+        "mixed": report.get("mixed"),
+        "groups": [{"label": g.get("label"), "preset": g.get("preset"),
+                    "count": g.get("count"), "fields": g.get("fields"),
+                    "files": g.get("files")} for g in report.get("groups", [])],
+        "duplicates": report.get("duplicates", []),
+        "outliers": report.get("outliers", []),
+    }
+    path = os.path.join(os.path.abspath(root), "scan-groups.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+    return path
+
+
 def model_detect(samples, preset_map, cfg, scores=None, mined=None):
     """Ask the detection node to pick a preset or propose a schema.
 
@@ -361,7 +622,18 @@ def detect(directory, cfg):
     directory = os.path.abspath(directory)
     preset_map = cfg.get("_presets") or all_presets(cfg.get("presets"))
     names = _pdfs(directory)
-    samples = digest(directory, max_files=int(cfg.get("detect_sample", 15)))
+    scan_method = (cfg.get("scan_method") or "auto").strip().lower()
+    scan = cfg.get("_scan_cache")
+    if scan is None and scan_method in ("auto", "embedding"):
+        try:
+            scan = embed_scan(directory, cfg)
+            cfg["_scan_cache"] = scan
+        except BaseException:
+            scan = None
+    if scan and scan.get("sample"):
+        samples = scan["sample"]
+    else:
+        samples = digest(directory, max_files=int(cfg.get("detect_sample", 15)))
     scores = heuristic_scores(samples, preset_map)
     method = (cfg.get("detect_method") or "model").strip().lower()
     allow_fields = bool(cfg.get("detect_fields", True))
@@ -375,6 +647,15 @@ def detect(directory, cfg):
         "scores": scores,
         "mined": mined,
     }
+    if scan:
+        report["scan"] = {
+            "embedded": scan.get("embedded"),
+            "no_text": scan.get("no_text"),
+            "mixed": scan.get("mixed"),
+            "clusters": len(scan.get("clusters", [])),
+            "groups": [{"label": g.get("label"), "preset": g.get("preset"),
+                        "count": g.get("count")} for g in scan.get("groups", [])],
+        }
     chosen, confidence, reason = "books", 0.0, "no signal; default"
     matched = False
     model_proposal = None

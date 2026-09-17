@@ -531,7 +531,7 @@ class App:
         ok("Directory set to %s" % self.directory)
         _pause()
 
-    def _run_with_progress(self):
+    def _run_with_progress(self, only=None):
         """Run the pipeline, spinning through the silent detect/scan phases and
         stopping as soon as per-file classification progress begins."""
         spin = progress.Spinner("Scanning")
@@ -544,20 +544,54 @@ class App:
                 spin.stop()
 
         try:
-            return self.pipeline.run(self.directory, self.cfg, on_phase=phase)
+            return self.pipeline.run(self.directory, self.cfg, on_phase=phase, only=only)
         finally:
             spin.stop()
 
-    def guided_run(self):
-        catalog, plan = self.catalog(), self.plan()
-        if catalog and plan:
-            if not ask("An old plan already exists (%d files). Overwrite it with a fresh classification?"
-                       % catalog.get("count", 0), default=False):
-                self.review_and_apply()
-                return
+    def _structure_prompt(self):
+        """Ask whether the folder is homogeneous; if not, scan and optionally
+        return the file list of the dominant group to process."""
+        if ask("Are all documents in this directory similarly structured "
+               "(e.g. all books / all papers / all magazines)?", default=True):
+            return None
+        scan = self._safe("scan", lambda: self.pipeline.preset_lib.embed_scan(self.directory, self.cfg),
+                          busy="Scanning")
+        if scan is None:
+            return None
+        self.cfg["_scan_cache"] = scan
+        path = None
+        try:
+            path = self.pipeline.preset_lib.save_scan_groups(self.directory, scan)
+        except Exception:
+            path = None
+        print("\nScan: %d group(s), %d file(s) with no text, mixed=%s"
+              % (len(scan["groups"]), scan["no_text"], scan["mixed"]))
+        for i, group in enumerate(scan["groups"][:8], 1):
+            print("  %d  %-28s %5d  preset=%s"
+                  % (i, group["label"][:28], group["count"], group["preset"] or "-"))
+        if path:
+            print(_c("  groups -> %s" % path, "90"))
+        if not scan.get("mixed") or not scan.get("groups"):
+            return None
+        choice = input("[Enter] process group 1 now   c cancel: ").strip().lower()
+        if choice == "c":
+            return None
+        group = scan["groups"][0]
+        if group.get("preset"):
+            self._apply_preset(group["preset"])
+        elif group.get("fields"):
+            label = group.get("label") or "Group 1"
+            draft = self.pipeline.preset_lib.build_from_fields(label, group["fields"])
+            self._apply_ephemeral(draft, self.pipeline.preset_lib.make_id(label))
+        print("Processing group: %s (%d files)" % (group["label"], group["count"]))
+        return list(group.get("files") or [])
+
+    def _detect_and_choose(self):
+        """Detect the folder type and let the user confirm/override it.
+        Returns False to abort."""
         report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
         if report is None:
-            return
+            return False
         chosen = report.get("preset") or "books"
         current = self.cfg.get("preset")
         preset_map = self._preset_map()
@@ -614,7 +648,19 @@ class App:
                 self.choose_preset()
             elif choice == "n":
                 self._new_preset()
-        count = self._pdf_count()
+        return True
+
+    def guided_run(self):
+        catalog, plan = self.catalog(), self.plan()
+        if catalog and plan:
+            if not ask("An old plan already exists (%d files). Overwrite it with a fresh classification?"
+                       % catalog.get("count", 0), default=False):
+                self.review_and_apply()
+                return
+        only = self._structure_prompt()
+        if only is None and not self._detect_and_choose():
+            return
+        count = len(only) if only else self._pdf_count()
         if count == 0:
             warn("No PDFs in %s" % self.directory)
             _pause()
@@ -630,7 +676,7 @@ class App:
             return
         _clear()
         self.header()
-        result = self._safe("classify", self._run_with_progress)
+        result = self._safe("classify", lambda: self._run_with_progress(only))
         if result is None:
             return
         catalog, plan = result
@@ -642,6 +688,31 @@ class App:
         self.review_and_apply()
 
     def yolo(self):
+        scan = None
+        try:
+            scan = self.pipeline.preset_lib.embed_scan(self.directory, self.cfg)
+        except BaseException:
+            scan = None
+        if scan:
+            self.cfg["_scan_cache"] = scan
+            if scan.get("mixed"):
+                path = None
+                try:
+                    path = self.pipeline.preset_lib.save_scan_groups(self.directory, scan)
+                except Exception:
+                    path = None
+                _clear()
+                self.header()
+                warn("This folder looks like it mixes %d document types." % len(scan["groups"]))
+                for i, group in enumerate(scan["groups"][:8], 1):
+                    print("  %d  %-28s %5d  preset=%s"
+                          % (i, group["label"][:28], group["count"], group["preset"] or "-"))
+                if path:
+                    print(_c("  groups -> %s" % path, "90"))
+                print("YOLO won't apply one schema across a mixed folder yet "
+                      "(per-group runs land next). Use 1 (guided) to process a group.")
+                _pause()
+                return
         report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
         if report is None:
             return
