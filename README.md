@@ -9,51 +9,16 @@ classified at a time**, so no model ever has to hold more than a single cover in
 its head. Runs against [Ollama](https://ollama.com) by default, so there are no
 API keys.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/kaerberus/mmmdocs/main/install.sh | bash
-```
-
-**Basic usage:**
-```bash
-cd /path/to/your/pdfs && mmmdocs
-# 0 = YOLO, 1 = guided, 2 = change directory
-```
-
----
-
-## Contents
-
-- [Install](#install)
-- [The TUI](#the-tui)
-- [Command line](#command-line)
-- [How it works](#how-it-works)
-- [Presets & detection](#presets--detection)
-- [Custom prompts & other document types](#custom-prompts--other-document-types)
-- [Modes, names & images](#modes-names--images)
-- [Model per node](#model-per-node)
-- [Configuration](#configuration)
-- [Output files](#output-files)
-- [Benchmarking models](#benchmarking-models)
-- [opencode integration](#opencode-integration)
-- [Troubleshooting](#troubleshooting)
-- [Layout](#layout)
-- [License](#license)
-
----
-
-## Install
-
-**One line** (clones to `~/.local/share/mmmdocs`, installs PyMuPDF, links
-`mmmdocs` into `~/.local/bin` and adds it to your PATH):
+## Installation
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kaerberus/mmmdocs/main/install.sh | bash
 ```
 
-Then `cd` into a folder of PDFs and run `mmmdocs` — it opens on that folder.
-Re-run the installer any time to update. Env overrides:
-`MMMDOCS_DIR`, `MMMDOCS_BRANCH`, `PYTHON`, and `MMMDOCS_PULL_MODEL=1` to also pull
-`embeddinggemma`.
+It clones to `~/.local/share/mmmdocs`, installs PyMuPDF, links `mmmdocs` into
+`~/.local/bin`, and adds that to your PATH. Re-run it any time to update. Env
+overrides: `MMMDOCS_DIR`, `MMMDOCS_BRANCH`, `PYTHON`, and `MMMDOCS_PULL_MODEL=1`
+to also pull `embeddinggemma`.
 
 **Or clone and run it directly** — on startup `mmmdocs` checks every dependency,
 offers to install what's missing, and drops you into a TUI:
@@ -71,6 +36,36 @@ needed to start; without Ollama the metadata commands and the TUI still work.
 
 Optional: `export PATH="$PWD/bin:$PATH"` to call `mmmdocs` instead of
 `python3 -m mmmdocs`.
+
+## Basic Usage
+
+```bash
+cd /path/to/your/pdfs && mmmdocs
+# 0 = YOLO, 1 = guided, 2 = change directory
+```
+
+---
+
+## Contents
+
+- [Installation](#installation)
+- [Basic Usage](#basic-usage)
+- [The TUI](#the-tui)
+- [Command line](#command-line)
+- [How it works](#how-it-works)
+- [Presets & detection](#presets--detection)
+- [Custom prompts & other document types](#custom-prompts--other-document-types)
+- [Modes, names & images](#modes-names--images)
+- [Model per node](#model-per-node)
+- [Configuration](#configuration)
+- [Output files](#output-files)
+- [Benchmarking models](#benchmarking-models)
+- [opencode integration](#opencode-integration)
+- [Troubleshooting](#troubleshooting)
+- [Layout](#layout)
+- [License](#license)
+
+---
 
 ## The TUI
 
