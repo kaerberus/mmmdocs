@@ -6,7 +6,7 @@ import json
 import os
 import sys
 
-from . import engine, pipeline, presets
+from . import engine, pipeline, presets, progress
 
 
 def _apply_overrides(cfg, args):
@@ -75,9 +75,11 @@ def cmd_cleanup(args):
 
 def cmd_classify_one(args):
     cfg = _load(args)
-    pipeline.resolve_preset(os.path.dirname(os.path.abspath(args.file)), cfg)
+    with progress.Spinner("Detecting"):
+        pipeline.resolve_preset(os.path.dirname(os.path.abspath(args.file)), cfg)
     info = engine.info_data(args.file)
-    rec = pipeline._classify_worker((args.file, info, cfg))
+    with progress.Spinner("Classifying"):
+        rec = pipeline._classify_worker((args.file, info, cfg))
     print(json.dumps(rec, indent=2, ensure_ascii=False))
 
 
@@ -96,16 +98,28 @@ def cmd_presets(args):
 
 def cmd_detect(args):
     cfg = _load(args)
-    report = presets.detect(args.dir, cfg)
+    with progress.Spinner("Detecting"):
+        report = presets.detect(args.dir, cfg)
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
 def cmd_run(args):
     cfg = _load(args)
-    catalog, plan = pipeline.run(
-        args.dir, cfg, only=args.only, limit=args.limit,
-        keep_duplicates=args.keep_duplicates,
-    )
+    spin = progress.Spinner("Detecting")
+
+    def phase(name):
+        if name == "detect":
+            spin.start()
+        else:
+            spin.stop()
+
+    try:
+        catalog, plan = pipeline.run(
+            args.dir, cfg, only=args.only, limit=args.limit,
+            keep_duplicates=args.keep_duplicates, on_phase=phase,
+        )
+    finally:
+        spin.stop()
     renamed = sum(1 for item in plan if item.get("renamed"))
     summary = [
         "%d classified, %d planned (%d renamed, mode=%s)"
@@ -127,7 +141,8 @@ def cmd_plan(args):
 
 
 def cmd_undo(args):
-    result = pipeline.undo_plan(args.dir, dry_run=not args.yes)
+    with progress.Spinner("Undoing"):
+        result = pipeline.undo_plan(args.dir, dry_run=not args.yes)
     mode = "DRY-RUN" if result["dry_run"] else "UNDONE"
     print("%s: %d restored, %d skipped" % (mode, result["restored"], result["skipped"]))
     for move in result["moves"]:
@@ -139,17 +154,29 @@ def cmd_undo(args):
 def cmd_bench(args):
     cfg = _load(args)
     models = [m.strip() for m in args.vision_models.split(",") if m.strip()]
-    results = pipeline.bench(args.dir, models, cfg, sample=args.sample)
+    spin = progress.Spinner("Scanning")
+
+    def phase(name):
+        if name == "scan":
+            spin.start()
+        else:
+            spin.stop()
+
+    try:
+        results = pipeline.bench(args.dir, models, cfg, sample=args.sample, on_phase=phase)
+    finally:
+        spin.stop()
     for model, r in results.items():
         print("%-24s json_ok=%s needs_human=%s avg=%ss avg_bytes=%s" % (
             model, r["json_ok_rate"], r["needs_human_rate"], r["avg_seconds"], r["avg_bytes"]))
 
 
 def cmd_apply(args):
-    result = pipeline.apply_plan(
-        args.dir, dry_run=not args.yes, force=args.force,
-        plan_path=args.plan, min_confidence=args.min_confidence,
-    )
+    with progress.Spinner("Applying"):
+        result = pipeline.apply_plan(
+            args.dir, dry_run=not args.yes, force=args.force,
+            plan_path=args.plan, min_confidence=args.min_confidence,
+        )
     mode = "DRY-RUN" if result["dry_run"] else "APPLIED"
     print("%s: %d file(s), %d skipped" % (mode, result["moved"], result["skipped"]))
     for move in result["moves"]:

@@ -78,6 +78,11 @@ mmmdocs — /path/to/docs   (79 PDFs)
 | **0 YOLO** | yes | no (one `y/n`) | no | moves them anyway |
 | **1 Guided** | yes | yes | yes | skips them (`f` forces) |
 
+Long steps are never silent: detection, scanning, classifying, applying and
+undoing show a live `Detecting....... 12s` indicator (growing dots + elapsed),
+so you know it's working. Piped/scripted output stays clean — the indicator goes
+to stderr and prints the label only once when there's no terminal.
+
 ### YOLO (0)
 
 Detect the document type, print exactly what it will run, ask a single `y/n`, then
@@ -195,7 +200,9 @@ mmmdocs apply   /path/to/docs --yes     # apply
 mmmdocs undo    /path/to/docs --yes     # reverse the last apply
 ```
 
-Page specs are 1-based: `5`, `5-10`, `1,3,7-9`, or `all`.
+Page specs are 1-based: `5`, `5-10`, `1,3,7-9`, or `all`. Progress indicators go
+to stderr, so `mmmdocs detect … | jq` (or any piped command) still receives clean
+stdout.
 
 ## How it works
 

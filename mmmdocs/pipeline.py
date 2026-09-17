@@ -474,19 +474,30 @@ def _write_history(root, entries):
         os.remove(path)
 
 
-def run(directory, cfg, only=None, limit=None, keep_duplicates=False):
+def _phase(on_phase, name):
+    """Fire a phase callback, ignoring any error it raises."""
+    if on_phase:
+        try:
+            on_phase(name)
+        except Exception:
+            pass
+
+
+def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=None):
     root = os.path.abspath(directory)
     if not os.path.isdir(root):
         raise SystemExit("not a directory: %s" % root)
     if not cfg.get("cache_root"):
         cfg["cache_root"] = os.path.join(root, ".rpdf-cache")
 
+    _phase(on_phase, "detect")
     preset_name, detection = resolve_preset(root, cfg)
     if detection:
         print("[mmmdocs] detected preset %r (%s, %.2f): %s"
               % (preset_name, detection.get("method"), detection.get("confidence", 0.0),
                  detection.get("reason", "")), file=sys.stderr)
 
+    _phase(on_phase, "scan")
     print("[mmmdocs] scanning %s" % root, file=sys.stderr)
     manifest = engine.manifest_data(root, sample=cfg.get("manifest_sample", 12))
     files = manifest["files"]
@@ -505,6 +516,7 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False):
     if limit:
         pending = pending[:limit]
 
+    _phase(on_phase, "classify")
     print("[mmmdocs] %d files to classify (%d duplicate(s) skipped) with %s"
           % (len(pending), len(skip), cfg["vision_model"]), file=sys.stderr)
 
@@ -527,6 +539,7 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False):
                 print("[mmmdocs] %d/%d %s%s" % (done, len(payloads), os.path.basename(rec["file"]), flag),
                       file=sys.stderr)
 
+    _phase(on_phase, "plan")
     records.sort(key=lambda r: r["file"])
     mode = cfg.get("mode", "rename")
     rename, move = mode_flags(mode)
@@ -680,10 +693,12 @@ def _bench_sample(files, sample):
     return picked
 
 
-def bench(directory, models, cfg, sample=5):
+def bench(directory, models, cfg, sample=5, on_phase=None):
     root = os.path.abspath(directory)
+    _phase(on_phase, "scan")
     manifest = engine.manifest_data(root, sample=cfg.get("manifest_sample", 12))
     files = _bench_sample(manifest["files"], sample)
+    _phase(on_phase, "classify")
     results = {}
     for model in models:
         cfg2 = dict(cfg)

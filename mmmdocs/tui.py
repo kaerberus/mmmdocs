@@ -14,7 +14,7 @@ import sys
 import tempfile
 import textwrap
 
-from . import naming, templates
+from . import naming, progress, templates
 from .deps import ask, info, ok, warn, _c, ollama_reachable
 
 
@@ -159,7 +159,8 @@ class App:
         cwd = os.path.abspath(os.getcwd())
         self.directory = os.path.abspath(os.path.expanduser(last)) if last and os.path.isdir(os.path.expanduser(last)) else cwd
         self.host = self.cfg.get("ollama_host") or "http://localhost:11434"
-        self.reachable, self.models = ollama_reachable(self.host)
+        with progress.Spinner("Checking Ollama"):
+            self.reachable, self.models = ollama_reachable(self.host)
 
     # ---------------------------------------------------------------- helpers
     def catalog(self):
@@ -168,8 +169,11 @@ class App:
     def plan(self):
         return _read_json(os.path.join(self.directory, "move-plan.json"))
 
-    def _safe(self, label, fn):
+    def _safe(self, label, fn, busy=None):
         try:
+            if busy:
+                with progress.Spinner(busy):
+                    return fn()
             return fn()
         except KeyboardInterrupt:
             print()
@@ -222,7 +226,7 @@ class App:
         self.pipeline.normalize_config(self.cfg)
 
     def _detect_and_suggest(self):
-        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg))
+        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
         if report is None:
             return None
         name = report.get("preset")
@@ -424,7 +428,7 @@ class App:
         info = self._safe("info", lambda: self.pipeline.engine.info_data(path))
         if info is None:
             return
-        rec = self._safe("test", lambda: self.pipeline.classify_record(path, info, cfg))
+        rec = self._safe("test", lambda: self.pipeline.classify_record(path, info, cfg), busy="Classifying")
         if rec is None:
             return
         name = self.pipeline.naming.render_filename(rec, draft.get("name_template"), os.path.basename(path))
@@ -510,6 +514,23 @@ class App:
         ok("Directory set to %s" % self.directory)
         _pause()
 
+    def _run_with_progress(self):
+        """Run the pipeline, spinning through the silent detect/scan phases and
+        stopping as soon as per-file classification progress begins."""
+        spin = progress.Spinner("Scanning")
+
+        def phase(name):
+            if name in ("detect", "scan"):
+                spin.label = "Detecting" if name == "detect" else "Scanning"
+                spin.start()
+            else:
+                spin.stop()
+
+        try:
+            return self.pipeline.run(self.directory, self.cfg, on_phase=phase)
+        finally:
+            spin.stop()
+
     def guided_run(self):
         catalog, plan = self.catalog(), self.plan()
         if catalog and plan:
@@ -517,7 +538,7 @@ class App:
                        % catalog.get("count", 0), default=False):
                 self.review_and_apply()
                 return
-        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg))
+        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
         if report is None:
             return
         chosen = report.get("preset") or "books"
@@ -569,7 +590,7 @@ class App:
             return
         _clear()
         self.header()
-        result = self._safe("classify", lambda: self.pipeline.run(self.directory, self.cfg))
+        result = self._safe("classify", self._run_with_progress)
         if result is None:
             return
         catalog, plan = result
@@ -581,7 +602,7 @@ class App:
         self.review_and_apply()
 
     def yolo(self):
-        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg))
+        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
         if report is None:
             return
         chosen = report.get("preset") or "books"
@@ -606,12 +627,13 @@ class App:
             return
         _clear()
         self.header()
-        result = self._safe("yolo", lambda: self.pipeline.run(self.directory, self.cfg))
+        result = self._safe("yolo", self._run_with_progress)
         if result is None:
             return
         catalog, _plan = result
         applied = self._safe("apply", lambda: self.pipeline.apply_plan(
-            self.directory, dry_run=False, force=True, min_confidence=self.cfg.get("min_confidence")))
+            self.directory, dry_run=False, force=True, min_confidence=self.cfg.get("min_confidence")),
+            busy="Applying")
         if applied is None:
             return
         ok("%d classified; applied %d change(s), %d skipped" % (
@@ -652,7 +674,7 @@ class App:
     def _apply_from_plan(self, force=False):
         applied = self._safe("apply", lambda: self.pipeline.apply_plan(
             self.directory, dry_run=False, force=force,
-            min_confidence=self.cfg.get("min_confidence")))
+            min_confidence=self.cfg.get("min_confidence")), busy="Applying")
         if applied is None:
             return
         ok("Changed %d file(s), %d skipped." % (applied["moved"], applied["skipped"]))
@@ -708,7 +730,7 @@ class App:
             _pause()
             return
         if ask("Restore these %d file(s)?" % result["restored"], default=False):
-            applied = self._safe("undo", lambda: self.pipeline.undo_plan(self.directory, dry_run=False))
+            applied = self._safe("undo", lambda: self.pipeline.undo_plan(self.directory, dry_run=False), busy="Undoing")
             if applied is not None:
                 ok("Restored %d file(s)." % applied["restored"])
         _pause()
@@ -716,7 +738,7 @@ class App:
     def scan(self):
         from . import engine
         manifest = self._safe("scan", lambda: engine.manifest_data(
-            self.directory, sample=self.cfg.get("manifest_sample", 12)))
+            self.directory, sample=self.cfg.get("manifest_sample", 12)), busy="Scanning")
         if manifest is None:
             return
         files = manifest["files"]
@@ -888,7 +910,8 @@ class App:
             elif choice == "7":
                 self.cfg["ollama_host"] = input("Ollama host: ").strip() or self.host
                 self.host = self.cfg["ollama_host"]
-                self.reachable, self.models = ollama_reachable(self.host)
+                with progress.Spinner("Checking Ollama"):
+                    self.reachable, self.models = ollama_reachable(self.host)
 
     def edit_prompts(self):
         while True:
