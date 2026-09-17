@@ -142,6 +142,7 @@ Everything secondary lives here:
   4  Name template             ({author} - {title} ({year}))
   5  Models & performance      -> vision/detection, workers, profile, host
   6  Detection method          (model)
+  y  YOLO proposed schema      (auto)
   ------ folder tools ------
   7  Scan folder (manifest)
   8  View catalog

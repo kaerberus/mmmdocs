@@ -1050,6 +1050,7 @@ class App:
             print("  4  Name template             (%s)" % self.cfg.get("name_template"))
             print("  5  Models & performance")
             print("  6  Detection method          (%s)" % self.cfg.get("detect_method"))
+            print("  y  YOLO proposed schema      (%s)" % self.cfg.get("yolo_schema"))
             print(_c("  ------ folder tools ------", "90"))
             print("  7  Scan folder (manifest)")
             print("  8  View catalog")
@@ -1103,6 +1104,11 @@ class App:
                 value = input("Detection method: ").strip()
                 if value in ("model", "auto", "heuristic"):
                     self.cfg["detect_method"] = value
+            elif choice == "y":
+                print("auto = use a proposed schema silently; ask = open the builder")
+                value = input("YOLO proposed schema: ").strip().lower()
+                if value in ("auto", "ask"):
+                    self.cfg["yolo_schema"] = value
 
     def models_menu(self):
         while True:
