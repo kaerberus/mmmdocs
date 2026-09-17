@@ -258,10 +258,10 @@ picker and in detection.
   unclear), or `heuristic` (no model).
 
 ```bash
-mmmdocs presets                      # list built-ins + user presets
-mmmdocs detect "/path/to/testdocs"   # -> {preset: wis, confidence: .., scores: {...}}
-mmmdocs run "/path/to/testdocs" --preset auto     # detect, then apply
-mmmdocs run "/path/to/testdocs" --preset wis      # force one
+mmmdocs presets                  # list built-ins + user presets
+mmmdocs detect "/path/to/docs"   # -> {preset: wis, confidence: .., scores: {...}}
+mmmdocs run "/path/to/docs" --preset auto     # detect, then apply
+mmmdocs run "/path/to/docs" --preset wis      # force one
 ```
 
 In the TUI, choosing a folder runs detection and offers to switch
