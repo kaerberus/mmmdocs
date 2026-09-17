@@ -38,8 +38,19 @@ git clone https://github.com/kaerberus/mmmdocs && cd mmmdocs && python3 -m mmmdo
 
 ## Install
 
-No install step. Clone it and run it — on startup `mmmdocs` checks every
-dependency, offers to install what's missing, and drops you into a TUI:
+**One line** (clones to `~/.local/share/mmmdocs`, installs PyMuPDF, links
+`mmmdocs` into `~/.local/bin` and adds it to your PATH):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kaerberus/mmmdocs/main/install.sh | bash
+```
+
+Then `mmmdocs`. Re-run it any time to update. Env overrides:
+`MMMDOCS_DIR`, `MMMDOCS_BRANCH`, `PYTHON`, and `MMMDOCS_PULL_MODEL=1` to also pull
+`embeddinggemma`.
+
+**Or clone and run it directly** — on startup `mmmdocs` checks every dependency,
+offers to install what's missing, and drops you into a TUI:
 
 ```bash
 git clone https://github.com/kaerberus/mmmdocs
@@ -538,6 +549,7 @@ mmmdocs/
 │   ├── pipeline.py    # orchestration, plan/apply/undo, dry-run
 │   └── cli.py         # argparse front-end (python -m mmmdocs <command>)
 ├── bin/mmmdocs        # launcher
+├── install.sh         # curl | bash installer
 ├── tools/make_agents.py
 ├── config.example.json
 ├── LICENSE
