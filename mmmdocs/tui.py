@@ -548,9 +548,24 @@ class App:
         finally:
             spin.stop()
 
+    def _run_groups_with_progress(self, groups):
+        spin = progress.Spinner("Scanning")
+
+        def phase(name):
+            if name in ("detect", "scan"):
+                spin.label = "Detecting" if name == "detect" else "Scanning"
+                spin.start()
+            else:
+                spin.stop()
+
+        try:
+            return self.pipeline.run_groups(self.directory, self.cfg, groups, on_phase=phase)
+        finally:
+            spin.stop()
+
     def _structure_prompt(self):
-        """Ask whether the folder is homogeneous; if not, scan and optionally
-        return the file list of the dominant group to process."""
+        """Ask whether the folder is homogeneous; if not, scan and return runnable
+        groups (or None to continue the normal single-schema flow)."""
         if ask("Are all documents in this directory similarly structured "
                "(e.g. all books / all papers / all magazines)?", default=True):
             return None
@@ -573,18 +588,16 @@ class App:
             print(_c("  groups -> %s" % path, "90"))
         if not scan.get("mixed") or not scan.get("groups"):
             return None
-        choice = input("[Enter] process group 1 now   c cancel: ").strip().lower()
-        if choice == "c":
+        choice = input("[Enter] process all %d groups   g pick one   c cancel: "
+                       % len(scan["groups"])).strip().lower()
+        groups = self.pipeline.preset_lib.groups_from_scan(scan, self.cfg)
+        if choice == "c" or not groups:
             return None
-        group = scan["groups"][0]
-        if group.get("preset"):
-            self._apply_preset(group["preset"])
-        elif group.get("fields"):
-            label = group.get("label") or "Group 1"
-            draft = self.pipeline.preset_lib.build_from_fields(label, group["fields"])
-            self._apply_ephemeral(draft, self.pipeline.preset_lib.make_id(label))
-        print("Processing group: %s (%d files)" % (group["label"], group["count"]))
-        return list(group.get("files") or [])
+        if choice == "g" and len(groups) > 1:
+            raw = input("Group number [1-%d]: " % len(groups)).strip()
+            if raw.isdigit() and 1 <= int(raw) <= len(groups):
+                return [groups[int(raw) - 1]]
+        return groups
 
     def _detect_and_choose(self):
         """Detect the folder type and let the user confirm/override it.
@@ -657,18 +670,26 @@ class App:
                        % catalog.get("count", 0), default=False):
                 self.review_and_apply()
                 return
-        only = self._structure_prompt()
-        if only is None and not self._detect_and_choose():
-            return
-        count = len(only) if only else self._pdf_count()
+        groups = self._structure_prompt()
+        if groups:
+            count = sum(len(g.get("files") or []) for g in groups)
+        else:
+            if not self._detect_and_choose():
+                return
+            count = self._pdf_count()
         if count == 0:
             warn("No PDFs in %s" % self.directory)
             _pause()
             return
         print(_c("\nReady", "1"))
         print("  directory : %s" % self.directory)
-        print("  preset    : %s" % self.cfg.get("preset"))
-        print("  template  : %s" % self.cfg.get("name_template"))
+        if groups:
+            print("  document  : mixed — %d group(s), each with its own schema" % len(groups))
+            for group in groups:
+                print("    %-30s %d files" % ((group.get("label") or "?")[:30], len(group.get("files") or [])))
+        else:
+            print("  preset    : %s" % self.cfg.get("preset"))
+            print("  template  : %s" % self.cfg.get("name_template"))
         print("  mode      : %s" % self.cfg.get("mode"))
         print("  model     : %s   workers: %s   files: %d"
               % (self.cfg.get("vision_model"), self.cfg.get("workers"), count))
@@ -676,7 +697,9 @@ class App:
             return
         _clear()
         self.header()
-        result = self._safe("classify", lambda: self._run_with_progress(only))
+        runner = (lambda: self._run_groups_with_progress(groups)) if groups \
+            else (lambda: self._run_with_progress(None))
+        result = self._safe("classify", runner)
         if result is None:
             return
         catalog, plan = result
@@ -693,50 +716,49 @@ class App:
             scan = self.pipeline.preset_lib.embed_scan(self.directory, self.cfg)
         except BaseException:
             scan = None
+        groups = None
         if scan:
             self.cfg["_scan_cache"] = scan
             if scan.get("mixed"):
-                path = None
                 try:
-                    path = self.pipeline.preset_lib.save_scan_groups(self.directory, scan)
+                    self.pipeline.preset_lib.save_scan_groups(self.directory, scan)
                 except Exception:
-                    path = None
-                _clear()
-                self.header()
-                warn("This folder looks like it mixes %d document types." % len(scan["groups"]))
-                for i, group in enumerate(scan["groups"][:8], 1):
-                    print("  %d  %-28s %5d  preset=%s"
-                          % (i, group["label"][:28], group["count"], group["preset"] or "-"))
-                if path:
-                    print(_c("  groups -> %s" % path, "90"))
-                print("YOLO won't apply one schema across a mixed folder yet "
-                      "(per-group runs land next). Use 1 (guided) to process a group.")
-                _pause()
-                return
-        report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
-        if report is None:
-            return
-        chosen = report.get("preset") or "books"
-        proposed = report.get("proposed") if not report.get("match", True) else None
-        if proposed and self.cfg.get("yolo_schema", "auto") == "ask":
-            self._new_preset(prefill=proposed)
-            chosen = self.cfg.get("preset") or chosen
-        elif proposed:
-            label = proposed.get("label") or "Custom schema"
-            draft = self.pipeline.preset_lib.build_from_fields(label, proposed.get("fields") or [])
-            pid = self.pipeline.preset_lib.make_id(label)
-            self._apply_ephemeral(draft, pid)
-            chosen = pid
+                    pass
+                groups = self.pipeline.preset_lib.groups_from_scan(scan, self.cfg)
+        if groups:
+            report = {"method": "scan", "confidence": 0.0}
+            chosen = "mixed"
+            count = sum(len(g.get("files") or []) for g in groups)
         else:
-            self._apply_preset(chosen)
+            report = self._safe("detect", lambda: self.pipeline.preset_lib.detect(self.directory, self.cfg), busy="Detecting")
+            if report is None:
+                return
+            chosen = report.get("preset") or "books"
+            proposed = report.get("proposed") if not report.get("match", True) else None
+            if proposed and self.cfg.get("yolo_schema", "auto") == "ask":
+                self._new_preset(prefill=proposed)
+                chosen = self.cfg.get("preset") or chosen
+            elif proposed:
+                label = proposed.get("label") or "Custom schema"
+                draft = self.pipeline.preset_lib.build_from_fields(label, proposed.get("fields") or [])
+                pid = self.pipeline.preset_lib.make_id(label)
+                self._apply_ephemeral(draft, pid)
+                chosen = pid
+            else:
+                self._apply_preset(chosen)
+            count = self._pdf_count()
         body = self._preset_map().get(chosen) or {}
-        count = self._pdf_count()
         print(_c("\nYOLO", "1;33"))
         print("  directory : %s" % self.directory)
-        print("  detected  : %s (%s, %.2f)" % (
-            body.get("label", chosen), report.get("method"), report.get("confidence", 0.0)))
-        print("  preset    : %s" % chosen)
-        print("  template  : %s" % self.cfg.get("name_template"))
+        if groups:
+            print("  document  : mixed — %d group(s), each with its own schema" % len(groups))
+            for group in groups:
+                print("    %-30s %d files" % ((group.get("label") or "?")[:30], len(group.get("files") or [])))
+        else:
+            print("  detected  : %s (%s, %.2f)" % (
+                body.get("label", chosen), report.get("method"), report.get("confidence", 0.0)))
+            print("  preset    : %s" % chosen)
+            print("  template  : %s" % self.cfg.get("name_template"))
         print("  mode      : %s" % self.cfg.get("mode"))
         print("  model     : %s   workers: %s   files: %d" % (
             self.cfg.get("vision_model"), self.cfg.get("workers"), count))
@@ -749,7 +771,9 @@ class App:
             return
         _clear()
         self.header()
-        result = self._safe("yolo", self._run_with_progress)
+        runner = (lambda: self._run_groups_with_progress(groups)) if groups \
+            else (lambda: self._run_with_progress(None))
+        result = self._safe("yolo", runner)
         if result is None:
             return
         catalog, _plan = result

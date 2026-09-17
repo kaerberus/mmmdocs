@@ -499,7 +499,36 @@ def _phase(on_phase, name):
             pass
 
 
-def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=None):
+def _classify_all(pending, cfg, on_phase=None):
+    """Classify a list of manifest entries, printing per-file progress."""
+    _phase(on_phase, "classify")
+    print("[mmmdocs] %d file(s) to classify with %s" % (len(pending), cfg["vision_model"]),
+          file=sys.stderr)
+    payloads = [(f["path"], dict(f), cfg) for f in pending]
+    records = []
+    workers = int(cfg.get("workers", 4))
+    if workers <= 1 or len(payloads) <= 1:
+        for i, payload in enumerate(payloads, 1):
+            rec = _classify_worker(payload)
+            records.append(rec)
+            print("[mmmdocs] %d/%d %s" % (i, len(payloads), os.path.basename(rec["file"])),
+                  file=sys.stderr)
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_classify_worker, p): p[0] for p in payloads}
+            for done, future in enumerate(as_completed(futures), 1):
+                rec = future.result()
+                records.append(rec)
+                flag = " !" if rec.get("error") or rec.get("needs_human") else ""
+                print("[mmmdocs] %d/%d %s%s" % (done, len(payloads),
+                                                os.path.basename(rec["file"]), flag),
+                      file=sys.stderr)
+    return records
+
+
+def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=None,
+        write=True, manifest=None):
     root = os.path.abspath(directory)
     if not os.path.isdir(root):
         raise SystemExit("not a directory: %s" % root)
@@ -514,8 +543,9 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=N
                  detection.get("reason", "")), file=sys.stderr)
 
     _phase(on_phase, "scan")
-    print("[mmmdocs] scanning %s" % root, file=sys.stderr)
-    manifest = engine.manifest_data(root, sample=cfg.get("manifest_sample", 12))
+    if manifest is None:
+        print("[mmmdocs] scanning %s" % root, file=sys.stderr)
+        manifest = engine.manifest_data(root, sample=cfg.get("manifest_sample", 12))
     files = manifest["files"]
 
     if only:
@@ -532,28 +562,7 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=N
     if limit:
         pending = pending[:limit]
 
-    _phase(on_phase, "classify")
-    print("[mmmdocs] %d files to classify (%d duplicate(s) skipped) with %s"
-          % (len(pending), len(skip), cfg["vision_model"]), file=sys.stderr)
-
-    payloads = [(f["path"], dict(f), cfg) for f in pending]
-    records = []
-    workers = int(cfg.get("workers", 4))
-    if workers <= 1 or len(payloads) <= 1:
-        for i, payload in enumerate(payloads, 1):
-            rec = _classify_worker(payload)
-            records.append(rec)
-            print("[mmmdocs] %d/%d %s" % (i, len(payloads), os.path.basename(rec["file"])), file=sys.stderr)
-    else:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_classify_worker, p): p[0] for p in payloads}
-            for done, future in enumerate(as_completed(futures), 1):
-                rec = future.result()
-                records.append(rec)
-                flag = " !" if rec.get("error") or rec.get("needs_human") else ""
-                print("[mmmdocs] %d/%d %s%s" % (done, len(payloads), os.path.basename(rec["file"]), flag),
-                      file=sys.stderr)
+    records = _classify_all(pending, cfg, on_phase)
 
     _phase(on_phase, "plan")
     records.sort(key=lambda r: r["file"])
@@ -580,10 +589,91 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=N
         "skipped_duplicates": sorted(skip),
         "records": records,
     }
+    if write:
+        catalog_path = _write_json(os.path.join(root, "catalog.json"), catalog)
+        plan_path = _write_json(
+            os.path.join(root, "move-plan.json"),
+            {"directory": root, "mode": mode, "name_template": cfg.get("name_template"),
+             "renamed": sum(1 for item in plan if item.get("renamed")),
+             "count": len(plan), "plan": plan},
+        )
+        print("[mmmdocs] wrote %s and %s" % (catalog_path, plan_path), file=sys.stderr)
+    return catalog, plan
+
+
+def run_groups(directory, cfg, groups, on_phase=None, manifest=None):
+    """Classify a mixed folder one group at a time, each with its own preset or
+    schema, then merge the records and plan into a single catalog + move-plan.
+
+    `groups` is a list of {"label", "preset", "files", "settings"} where
+    `settings` overrides name_template / vision_prompt / mode for that group.
+    """
+    root = os.path.abspath(directory)
+    if not os.path.isdir(root):
+        raise SystemExit("not a directory: %s" % root)
+    if not cfg.get("cache_root"):
+        cfg["cache_root"] = os.path.join(root, ".rpdf-cache")
+    if manifest is None:
+        print("[mmmdocs] scanning %s" % root, file=sys.stderr)
+        manifest = engine.manifest_data(root, sample=cfg.get("manifest_sample", 12))
+
+    by_name = {os.path.basename(f["path"]): f for f in manifest["files"]}
+    skip = set()
+    for paths in manifest["duplicate_groups"].values():
+        for dup in paths[1:]:
+            skip.add(os.path.basename(dup))
+
+    mode = cfg.get("mode", "rename")
+    per_group = []
+    all_records = []
+    group_meta = []
+    for index, group in enumerate(groups, 1):
+        names = [n for n in group.get("files", []) if n in by_name and n not in skip]
+        if not names:
+            continue
+        gcfg = dict(cfg)
+        gcfg.update(group.get("settings") or {})
+        gcfg["cache_root"] = cfg.get("cache_root")
+        print("[mmmdocs] group %d/%d: %s (%d file(s))"
+              % (index, len(groups), group.get("label") or "?", len(names)), file=sys.stderr)
+        records = _classify_all([by_name[n] for n in names], gcfg, on_phase)
+        pid = group.get("preset") or (group.get("settings") or {}).get("preset")
+        for rec in records:
+            rec["preset"] = pid or "custom"
+        per_group.append((gcfg, records))
+        all_records += records
+        group_meta.append({"label": group.get("label"), "preset": pid, "count": len(records)})
+
+    _phase(on_phase, "plan")
+    all_records.sort(key=lambda r: r["file"])
+    rename, move = mode_flags(mode)
+    if move:
+        taxonomy, reason = propose_taxonomy(all_records, cfg)
+    else:
+        taxonomy, reason = {}, "mixed groups (%s)" % mode
+    plan = []
+    for gcfg, records in per_group:
+        plan += build_move_plan(root, records, taxonomy, mode, gcfg.get("name_template"))
+
+    catalog = {
+        "directory": root,
+        "vision_input": cfg["vision_input"],
+        "vision_model": cfg["vision_model"],
+        "orchestrator_input": cfg["orchestrator_input"],
+        "orchestrator_model": cfg["orchestrator_model"],
+        "preset": "mixed",
+        "mode": mode,
+        "name_template": "mixed",
+        "taxonomy_reason": reason,
+        "count": len(all_records),
+        "skipped_duplicates": sorted(skip),
+        "groups": group_meta,
+        "records": all_records,
+    }
     catalog_path = _write_json(os.path.join(root, "catalog.json"), catalog)
     plan_path = _write_json(
         os.path.join(root, "move-plan.json"),
-        {"directory": root, "mode": mode, "name_template": cfg.get("name_template"),
+        {"directory": root, "mode": mode, "name_template": "mixed", "groups": group_meta,
          "renamed": sum(1 for item in plan if item.get("renamed")),
          "count": len(plan), "plan": plan},
     )

@@ -140,10 +140,17 @@ def cmd_run(args):
             spin.stop()
 
     try:
-        catalog, plan = pipeline.run(
-            args.dir, cfg, only=args.only, limit=args.limit,
-            keep_duplicates=args.keep_duplicates, on_phase=phase,
-        )
+        if getattr(args, "groups", False):
+            with progress.Spinner("Scanning"):
+                scan = presets.embed_scan(args.dir, cfg)
+            cfg["_scan_cache"] = scan
+            groups = presets.groups_from_scan(scan, cfg)
+            catalog, plan = pipeline.run_groups(args.dir, cfg, groups, on_phase=phase)
+        else:
+            catalog, plan = pipeline.run(
+                args.dir, cfg, only=args.only, limit=args.limit,
+                keep_duplicates=args.keep_duplicates, on_phase=phase,
+            )
     finally:
         spin.stop()
     renamed = sum(1 for item in plan if item.get("renamed"))
@@ -314,6 +321,8 @@ def build_parser():
     p.add_argument("--only", action="append", help="limit to a file name (repeatable)")
     p.add_argument("--limit", type=int)
     p.add_argument("--keep-duplicates", action="store_true", dest="keep_duplicates")
+    p.add_argument("--groups", action="store_true",
+                   help="scan first, then classify per group with each group's preset/schema")
     _add_model_flags(p)
     _add_organize_flags(p)
     _add_prompt_flags(p)

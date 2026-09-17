@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 
 from . import engine
 
@@ -410,6 +411,33 @@ def _embed_opts(cfg, backend):
     return {"host": cfg.get("ollama_host") or "http://localhost:11434"}
 
 
+def _describe_scans(directory, names, texts, cfg):
+    """For no-text files, optionally caption the cover with a vision model so they
+    can still be embedded and clustered. Opt-in via `detect_vision`."""
+    from . import nodes
+
+    backend = cfg.get("vision_input") or "ollama"
+    model = cfg.get("scan_classifier") or cfg.get("vision_model")
+    opts = _embed_opts(cfg, backend)
+    for i, name in enumerate(names):
+        if texts[i].strip():
+            continue
+        try:
+            rendered = engine.render_data(os.path.join(directory, name), "1",
+                                          profile="classify", max_pages=1,
+                                          cache_root=cfg.get("cache_root"))
+            images = [im["path"] for im in rendered["images"]]
+            if not images:
+                continue
+            text = nodes.chat(backend, model, "You briefly caption documents.",
+                              "In one line, state the document type and its heading or title.",
+                              images, **opts)
+            texts[i] = (text or "").strip()
+            shutil.rmtree(rendered["out_dir"], ignore_errors=True)
+        except BaseException:
+            continue
+
+
 def embed_scan(directory, cfg):
     """Cheap qualitative scan: embed first-page text, cluster, and match presets.
 
@@ -435,6 +463,9 @@ def embed_scan(directory, cfg):
                                           max_chars=800).get("text", ""))
         except BaseException:
             texts.append("")
+    if cfg.get("detect_vision"):
+        _describe_scans(directory, names, texts, cfg)
+
     no_text = sum(1 for t in texts if not t.strip())
 
     backend = cfg.get("embed_input") or "ollama"
@@ -545,6 +576,34 @@ def embed_scan(directory, cfg):
             i = valid[m][0]
             report["sample"].append({"name": names[i], "text": texts[i]})
     return report
+
+
+def groups_from_scan(scan, cfg):
+    """Turn a scan report into runnable groups, each with its own settings.
+
+    Groups with a matching preset use it; others get a schema built from mined
+    fields (injected into cfg['_presets'] as an ephemeral preset).
+    """
+    preset_map = cfg.get("_presets") or all_presets(cfg.get("presets"))
+    out = []
+    for group in scan.get("groups", []):
+        pid = group.get("preset")
+        settings = {}
+        if pid and pid in preset_map:
+            settings = preset_defaults(preset_map, pid)
+        elif group.get("fields"):
+            label = group.get("label") or "Group"
+            draft = build_from_fields(label, group["fields"])
+            pid = make_id(label)
+            preset_map[pid] = draft
+            settings = {"name_template": draft["name_template"],
+                        "vision_prompt": draft["vision_prompt"],
+                        "vision_system_prompt": draft.get("vision_system_prompt"),
+                        "mode": draft.get("mode", "rename")}
+        out.append({"label": group.get("label"), "preset": pid,
+                    "files": group.get("files", []), "settings": settings})
+    cfg["_presets"] = preset_map
+    return out
 
 
 def save_scan_groups(root, report):
