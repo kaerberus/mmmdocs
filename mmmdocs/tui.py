@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 
 from . import naming, progress, templates
 from .deps import ask, info, ok, warn, _c, ollama_reachable, pull_model, terminal_width
@@ -121,6 +122,17 @@ def _shorten(path, width=None):
     if len(path) <= width:
         return path
     return "..." + path[-(width - 3):]
+
+
+def _fmt_duration(seconds):
+    seconds = int(round(seconds))
+    if seconds < 60:
+        return "%ds" % seconds
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return "%dm %02ds" % (minutes, secs)
+    hours, minutes = divmod(minutes, 60)
+    return "%dh %02dm" % (hours, minutes)
 
 
 def _read_json(path):
@@ -772,12 +784,14 @@ class App:
         self.header()
         runner = (lambda: self._run_groups_with_progress(groups)) if groups \
             else (lambda: self._run_with_progress(None))
+        t0 = time.time()
         result = self._safe("classify", runner)
         if result is None:
             return
         catalog, plan = result
         flagged = [r for r in catalog["records"] if r.get("needs_human") or r.get("error")]
         ok("%d classified, %d planned" % (catalog["count"], len(plan)))
+        print(_c("  plan built in %s" % _fmt_duration(time.time() - t0), "90"))
         if flagged:
             warn("%d need review" % len(flagged))
         _pause()
@@ -846,10 +860,12 @@ class App:
         self.header()
         runner = (lambda: self._run_groups_with_progress(groups)) if groups \
             else (lambda: self._run_with_progress(None))
+        t0 = time.time()
         result = self._safe("yolo", runner)
         if result is None:
             return
         catalog, _plan = result
+        print(_c("  plan built in %s" % _fmt_duration(time.time() - t0), "90"))
         applied = self._safe("apply", lambda: self.pipeline.apply_plan(
             self.directory, dry_run=False, force=True, min_confidence=self.cfg.get("min_confidence")),
             busy="Applying")
