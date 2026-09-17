@@ -20,6 +20,17 @@ It clones to `~/.local/share/mmmdocs`, installs PyMuPDF, links `mmmdocs` into
 overrides: `MMMDOCS_DIR`, `MMMDOCS_BRANCH`, `PYTHON`, and `MMMDOCS_PULL_MODEL=1`
 to also pull `embeddinggemma`.
 
+## Basic Usage
+
+```bash
+cd /path/to/your/pdfs && mmmdocs
+# 0 = YOLO, 1 = guided, 2 = change directory
+```
+
+---
+
+## Manual install
+
 **Or clone and run it directly** — on startup `mmmdocs` checks every dependency,
 offers to install what's missing, and drops you into a TUI:
 
@@ -37,19 +48,13 @@ needed to start; without Ollama the metadata commands and the TUI still work.
 Optional: `export PATH="$PWD/bin:$PATH"` to call `mmmdocs` instead of
 `python3 -m mmmdocs`.
 
-## Basic Usage
-
-```bash
-cd /path/to/your/pdfs && mmmdocs
-# 0 = YOLO, 1 = guided, 2 = change directory
-```
-
 ---
 
 ## Contents
 
 - [Installation](#installation)
 - [Basic Usage](#basic-usage)
+- [Manual install](#manual-install)
 - [The TUI](#the-tui)
 - [Command line](#command-line)
 - [How it works](#how-it-works)
