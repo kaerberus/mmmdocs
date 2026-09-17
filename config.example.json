@@ -1,0 +1,44 @@
+{
+  "vision_input": "ollama",
+  "vision_model": "gemma4:e4b",
+  "orchestrator_input": "ollama",
+  "orchestrator_model": null,
+  "ollama_host": "http://localhost:11434",
+  "openai_base_url": "https://api.deepseek.com/v1",
+  "openai_api_key": null,
+  "workers": 4,
+  "profile": "classify",
+  "max_pages_vision": 3,
+  "sample_text_chars": 4000,
+  "manifest_sample": 12,
+  "cache_root": null,
+  "min_confidence": 0.5,
+  "mode": "rename",
+  "name_template": "{author} - {title} ({year})",
+  "vision_prompt": null,
+  "vision_system_prompt": null,
+  "orchestrator_prompt": null,
+  "orchestrator_system_prompt": null,
+  "detection_prompt": null,
+  "detection_system_prompt": null,
+  "detection_input": null,
+  "detection_model": null,
+  "detect_method": "model",
+  "detect_sample": 15,
+  "preset": "books",
+
+  "_comment_presets": "Add your own document presets here. They appear in the TUI preset picker and in detection. Copy the 'wis' example.",
+  "presets": {
+    "wis": {
+      "label": "Mercedes WIS service docs",
+      "description": "DaimlerChrysler WIS print-outs; each page has a document code and a heading.",
+      "name_template": "{doc_code} - {title}",
+      "mode": "rename",
+      "vision_prompt": "You are given ONE Mercedes-Benz WIS (Workshop Information System) print-out page.\n\nRead the document code on the page (format XX00.00-P-0000Z or XX00.00-Z-0000ZZ, usually the top line), the printed heading/title, the models it applies to, and the document's own date (DD.MM.YY, e.g. 12.8.92). Ignore the \"Copyright DaimlerChrysler AG <date>\" and \"CD-Ausgabe G/09/05\" print-metadata lines; \"G/09/05\" is the catalog edition, NOT the document code. A document code always contains a hyphen and looks like XX00.00-P-0000Z (or XX00.00-Z-0000ZZ).\n\nReturn ONLY JSON:\n{\n  \"doc_code\": \"the WIS code, or \\\"\\\" if none is printed\",\n  \"title\": \"the printed heading/title\",\n  \"models\": \"the model list, or \\\"all\\\"\",\n  \"date\": \"the document date, or \\\"\\\"\",\n  \"family\": \"WS | SI | OS | AD | AH | AS | other\",\n  \"doc_type\": \"service-document\",\n  \"confidence\": 0.0,\n  \"needs_human\": false,\n  \"notes\": \"\"\n}\n\nIf no code is printed, set \"doc_code\" to \"\" and put the heading in \"title\".\nIf the heading is unreadable, set \"needs_human\": true.\nOutput JSON only.",
+      "detect": {
+        "regex": "[A-Z]{2}\\d{2}\\.\\d{2}-[A-Z]-\\d{3,4}",
+        "keywords": ["daimlerchrysler"]
+      }
+    }
+  }
+}

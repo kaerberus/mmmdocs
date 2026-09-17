@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.rpdf-cache/
+config.json
+sample/*.pdf
+catalog.json
+move-plan.json
+bench.json
+apply-log.json
+apply-history.jsonl
+undo-log.json
