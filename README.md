@@ -11,6 +11,10 @@ API keys.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kaerberus/mmmdocs/main/install.sh | bash
+```
+
+**Basic usage:**
+```bash
 cd /path/to/your/pdfs && mmmdocs
 # 0 = YOLO, 1 = guided, 2 = change directory
 ```
