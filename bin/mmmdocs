@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve symlinks so the installer's ~/.local/bin/mmmdocs link finds the repo.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in
+    /*) ;;
+    *) SOURCE="$DIR/$SOURCE" ;;
+  esac
+done
+HERE="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 export PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 -m mmmdocs "$@"
