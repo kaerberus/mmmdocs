@@ -15,7 +15,7 @@ import tempfile
 import textwrap
 
 from . import naming, progress, templates
-from .deps import ask, info, ok, warn, _c, ollama_reachable, terminal_width
+from .deps import ask, info, ok, warn, _c, ollama_reachable, pull_model, terminal_width
 
 
 PROMPT_LABELS = [
@@ -605,20 +605,35 @@ class App:
         finally:
             spin.stop()
 
-    def _structure_prompt(self):
-        """Ask whether the folder is homogeneous; if not, scan and return runnable
-        groups (or None to continue the normal single-schema flow)."""
-        if ask("Are all documents in this directory similarly structured "
-               "(e.g. all books / all papers / all magazines)?", default=True):
+    def _scan_prompt(self):
+        """Offer the opt-in embedding scan. Returns runnable groups, or None to
+        continue the single-schema flow."""
+        preset_lib = self.pipeline.preset_lib
+        model = self.cfg.get("embed_model") or "embeddinggemma"
+        backend = self.cfg.get("embed_input") or "ollama"
+        files = self._pdf_count()
+        if files == 0:
             return None
-        scan = self._safe("scan", lambda: self.pipeline.preset_lib.embed_scan(self.directory, self.cfg),
+        estimate = max(1, round(files / 70.0))
+        if not ask("Scan this folder with the embedding model to find document types?\n"
+                   "  %s \u00b7 %d files \u00b7 ~%ds" % (model, files, estimate), default=False):
+            self.cfg["scan_method"] = "model"
+            return None
+        if backend == "ollama" and not any(
+                m == model or m == model + ":latest" for m in self.models):
+            if ask("%s is not installed. Pull it now (~300 MB)?" % model, default=True):
+                with progress.Spinner("Pulling %s" % model):
+                    pull_model(model)
+                self.reachable, self.models = ollama_reachable(self.host)
+        self.cfg["scan_method"] = "embedding"
+        scan = self._safe("scan", lambda: preset_lib.embed_scan(self.directory, self.cfg),
                           busy="Scanning")
         if scan is None:
             return None
         self.cfg["_scan_cache"] = scan
         path = None
         try:
-            path = self.pipeline.preset_lib.save_scan_groups(self.directory, scan)
+            path = preset_lib.save_scan_groups(self.directory, scan)
         except Exception:
             path = None
         print("\nScan: %d group(s), %d file(s) with no text, mixed=%s"
@@ -634,7 +649,7 @@ class App:
             "[Enter] process all %d groups" % len(scan["groups"]),
             "g       pick one group",
             "c       cancel"])
-        groups = self.pipeline.preset_lib.groups_from_scan(scan, self.cfg)
+        groups = preset_lib.groups_from_scan(scan, self.cfg)
         if choice == "c" or not groups:
             return None
         if choice == "g" and len(groups) > 1:
@@ -726,7 +741,7 @@ class App:
                        % catalog.get("count", 0), default=False):
                 self.review_and_apply()
                 return
-        groups = self._structure_prompt()
+        groups = self._scan_prompt()
         if groups:
             count = sum(len(g.get("files") or []) for g in groups)
         else:

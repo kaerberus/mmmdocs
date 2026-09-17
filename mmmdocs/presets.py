@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+from array import array
 
 from . import engine
 
@@ -450,11 +451,16 @@ def embed_scan(directory, cfg):
 
     directory = os.path.abspath(directory)
     preset_map = cfg.get("_presets") or all_presets(cfg.get("presets"))
-    names = _pdfs(directory)
+    all_names = _pdfs(directory)
     limit = int(cfg.get("scan_max") or 0)
-    if limit and len(names) > limit:
-        step = len(names) / float(limit)
-        names = [names[int(i * step)] for i in range(limit)]
+    residual = []
+    if limit and len(all_names) > limit:
+        step = len(all_names) / float(limit)
+        names = [all_names[int(i * step)] for i in range(limit)]
+        sampled = set(names)
+        residual = [n for n in all_names if n not in sampled]
+    else:
+        names = all_names
 
     texts = []
     for name in names:
@@ -478,12 +484,12 @@ def embed_scan(directory, cfg):
     for start in range(0, len(todo), batch):
         chunk = todo[start:start + batch]
         for i, vec in zip(chunk, nodes.embed(backend, model, [texts[i] for i in chunk], **opts)):
-            vectors[i] = vec
+            vectors[i] = array("f", vec)  # compact stdlib storage
 
     valid = [(i, vectors[i]) for i in range(len(names)) if vectors[i] is not None]
     report = {
         "directory": directory,
-        "files": len(names),
+        "files": len(all_names),
         "embedded": len(valid),
         "no_text": no_text,
         "embed_model": model,
@@ -495,6 +501,9 @@ def embed_scan(directory, cfg):
         "sample": [],
     }
     if not valid:
+        if residual:
+            report["groups"].append({"label": "Not scanned", "preset": None, "fields": [],
+                                     "count": len(residual), "files": residual})
         return report
 
     vecs = [v for _, v in valid]
@@ -552,6 +561,10 @@ def embed_scan(directory, cfg):
             "fields": fields,
             "files": [names[i] for i in cluster["members"]],
         })
+    if residual:
+        # Capped scan: the uncounted files are still classified, never dropped.
+        report["groups"].append({"label": "Not scanned", "preset": None, "fields": [],
+                                 "count": len(residual), "files": residual})
 
     dup_threshold = float(cfg.get("dup_threshold", 0.95))
     for cluster in clusters:
@@ -604,6 +617,30 @@ def groups_from_scan(scan, cfg):
                     "files": group.get("files", []), "settings": settings})
     cfg["_presets"] = preset_map
     return out
+
+
+def propose_schema_for_file(path, cfg):
+    """Best-effort per-file schema for a document that didn't fit a group.
+    Returns {"label", "fields"} or None."""
+    try:
+        text = engine.text_data(path, pages="1", max_chars=800).get("text", "")
+    except BaseException:
+        text = ""
+    sample = [{"name": os.path.basename(path), "text": text}]
+    mined = mine_fields(sample)
+    preset_map = cfg.get("_presets") or all_presets(cfg.get("presets"))
+    try:
+        choice = model_detect(sample, preset_map, cfg, None, mined)
+        if choice.get("proposed"):
+            return choice["proposed"]
+        if choice.get("preset"):
+            return None
+    except BaseException:
+        pass
+    if mined:
+        return {"label": "Schema for %s" % os.path.splitext(os.path.basename(path))[0],
+                "fields": mined}
+    return None
 
 
 def save_scan_groups(root, report):

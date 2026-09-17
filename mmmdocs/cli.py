@@ -37,6 +37,8 @@ def _apply_overrides(cfg, args):
         cfg["workers"] = args.workers
     if getattr(args, "cache_root", None) is not None:
         cfg["cache_root"] = args.cache_root
+    if getattr(args, "retry_outliers", False):
+        cfg["retry_outliers"] = True
     return cfg
 
 
@@ -323,6 +325,8 @@ def build_parser():
     p.add_argument("--keep-duplicates", action="store_true", dest="keep_duplicates")
     p.add_argument("--groups", action="store_true",
                    help="scan first, then classify per group with each group's preset/schema")
+    p.add_argument("--retry-outliers", action="store_true", dest="retry_outliers",
+                   help="re-classify needs_human files with a per-file proposed schema")
     _add_model_flags(p)
     _add_organize_flags(p)
     _add_prompt_flags(p)

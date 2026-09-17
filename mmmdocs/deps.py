@@ -65,9 +65,10 @@ def ask(prompt, default=True):
     """Print the question (wrapped, so a long prompt never wraps inside input())
     then read a short answer. Avoids readline redraw jumbles on narrow terminals."""
     suffix = "[Y/n]" if default else "[y/N]"
-    lines = textwrap.wrap(prompt, width=terminal_width()) or [prompt]
-    for line in lines:
-        print(_c(line, "1"))
+    width = terminal_width()
+    for paragraph in (prompt.splitlines() or [prompt]):
+        for line in textwrap.wrap(paragraph, width=width) or [paragraph]:
+            print(_c(line, "1"))
     try:
         answer = input("  %s > " % suffix).strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -151,6 +152,11 @@ def _pull_model(model):
         return subprocess.call(["ollama", "pull", model]) == 0
     except OSError:
         return False
+
+
+def pull_model(model):
+    """Pull an Ollama model (used by the TUI to offer the embedding model)."""
+    return _pull_model(model)
 
 
 # --------------------------------------------------------------------------- #

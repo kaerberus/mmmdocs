@@ -197,7 +197,7 @@ Run `mmmdocs <command> --help` for the full flag list.
 | --- | --- |
 | *(none)* / `tui` | Launch the interactive menu. |
 | `manifest DIR` | Compact metadata for every PDF in a directory. `--recursive`, `--sample N`. |
-| `run DIR` | Classify all files, write `catalog.json` + `move-plan.json`. `--preset`, `--mode`, `--name-template`, `--only NAME` (repeatable), `--limit N`, `--keep-duplicates`. |
+| `run DIR` | Classify all files, write `catalog.json` + `move-plan.json`. `--preset`, `--mode`, `--name-template`, `--only NAME` (repeatable), `--limit N`, `--keep-duplicates`, `--groups`, `--retry-outliers`. |
 | `plan DIR` | Rebuild `move-plan.json` from an existing `catalog.json` — **no model calls**. `--preset`, `--mode`, `--name-template`. |
 | `presets` | List built-in and user-defined presets. |
 | `detect DIR` | Suggest the best preset for a folder. `--detect-method model\|auto\|heuristic`. |
@@ -316,18 +316,29 @@ mmmdocs scan "/path/to/docs" --limit 500 --json
 
 - **Clusters** files with pure-Python leader clustering (cosine), **assigns
   presets** by nearest centroid, and flags a **mixed** folder when several groups
-  are substantial.
+  map to different types.
 - Flags **near-duplicates** and **outliers**, and writes `scan-groups.json` with
-  each group's file list (so it's actionable without per-group runs yet).
+  each group's file list.
 - Feeds the generative detector a **cluster-stratified sample** instead of a fixed
   stride, so minority types aren't missed.
 
-In the TUI, guided run (`1`) asks *"Are all documents in this directory similarly
-structured (all books / all papers / all magazines)?"*. If not, it scans, shows
-the groups, and can process the dominant group now. YOLO (`0`) scans and **stops**
-on a mixed folder rather than applying one schema across incompatible types.
-`scan_method: auto` uses embeddings when the model is available and falls back to
-the model-only path otherwise.
+**It's opt-in.** `scan_method` defaults to `model`, so detection never embeds on
+its own. In guided run (`1`) you're asked:
+
+```
+Scan this folder with the embedding model to find document types? [y/N]
+  embeddinggemma · 1000 files · ~15s
+```
+
+If the model isn't installed it offers to pull it. Declining (or `scan_method:
+model`) keeps the model-only path; `auto` scans when available, `embedding` forces
+it. Mixed folders are then processed one group at a time with each group's own
+preset/schema (guided offers all groups; YOLO does every group automatically).
+
+By default **every file is scanned** (batched, compact vectors). If you cap with
+`--limit`/`scan_max`, the uncounted files are placed in a **"Not scanned" group**
+and still classified — never dropped. `--retry-outliers` (off by default)
+re-classifies any `needs_human` file with a schema proposed from that file alone.
 
 ## Custom prompts & other document types
 
@@ -434,7 +445,8 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | `detect_fields` | `true` | let detection propose a schema when nothing fits |
 | `detect_min_match` | `0.5` | confidence below which a preset counts as "no match" |
 | `yolo_schema` | `auto` | YOLO uses a proposed schema (`auto`) or opens the builder (`ask`) |
-| `scan_method` | `auto` | `auto`, `embedding`, or `model` for the fast scan |
+| `scan_method` | `model` | `model` (opt-in), `auto`, or `embedding` for the fast scan |
+| `retry_outliers` | `false` | re-classify `needs_human` files with a per-file schema |
 | `embed_input` / `embed_model` | `ollama` / `embeddinggemma` | embedding backend and model |
 | `embed_batch` | `64` | texts per embedding request |
 | `scan_max` | `0` | max files to embed (`0` = all) |

@@ -62,8 +62,10 @@ DEFAULT_CONFIG = {
     "detect_fields": True,             # allow detection to propose a schema
     "detect_min_match": 0.5,           # below this a preset counts as "no match"
     "yolo_schema": "auto",             # auto = use a proposed schema silently | ask
-    # Fast embedding scan (qualitative look at large folders)
-    "scan_method": "auto",             # auto | embedding | model
+    # Fast embedding scan (qualitative look at large folders). Opt-in: `model`
+    # means detection never embeds on its own.
+    "scan_method": "model",            # model | auto | embedding
+    "retry_outliers": False,           # re-classify needs_human files with a per-file schema
     "embed_input": "ollama",           # ollama | openai
     "embed_model": "embeddinggemma",
     "embed_batch": 64,
@@ -526,6 +528,38 @@ def _classify_all(pending, cfg, on_phase=None):
     return records
 
 
+def retry_flagged(root, cfg, records):
+    """Re-classify records flagged needs_human/empty with a per-file proposed
+    schema. Off unless cfg['retry_outliers'] is set. Returns how many changed."""
+    count = 0
+    for rec in records:
+        if not (rec.get("needs_human") or rec.get("error") or not rec.get("title")):
+            continue
+        path = resolve_current_path(rec, root, _load_apply_log(root))
+        if not path:
+            continue
+        proposal = preset_lib.propose_schema_for_file(path, cfg)
+        if not proposal or not proposal.get("fields"):
+            continue
+        draft = preset_lib.build_from_fields(
+            proposal.get("label") or "Document", proposal["fields"])
+        if not draft:
+            continue
+        rcfg = dict(cfg)
+        rcfg["vision_prompt"] = draft["vision_prompt"]
+        rcfg["name_template"] = draft["name_template"]
+        try:
+            new = classify_record(path, engine.info_data(path), rcfg)
+        except BaseException:
+            continue
+        new["retried"] = True
+        new["preset"] = "retry"
+        rec.clear()
+        rec.update(new)
+        count += 1
+    return count
+
+
 def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=None,
         write=True, manifest=None):
     root = os.path.abspath(directory)
@@ -564,6 +598,10 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=N
     records = _classify_all(pending, cfg, on_phase)
 
     _phase(on_phase, "plan")
+    if cfg.get("retry_outliers"):
+        retried = retry_flagged(root, cfg, records)
+        if retried:
+            print("[mmmdocs] retried %d flagged file(s)" % retried, file=sys.stderr)
     records.sort(key=lambda r: r["file"])
     mode = cfg.get("mode", "rename")
     rename, move = mode_flags(mode)
@@ -644,6 +682,10 @@ def run_groups(directory, cfg, groups, on_phase=None, manifest=None):
         group_meta.append({"label": group.get("label"), "preset": pid, "count": len(records)})
 
     _phase(on_phase, "plan")
+    if cfg.get("retry_outliers"):
+        retried = retry_flagged(root, cfg, all_records)
+        if retried:
+            print("[mmmdocs] retried %d flagged file(s)" % retried, file=sys.stderr)
     all_records.sort(key=lambda r: r["file"])
     rename, move = mode_flags(mode)
     if move:
