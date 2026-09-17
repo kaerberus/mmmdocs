@@ -273,6 +273,33 @@ afterwards marks the preset `(customized)` and your edit wins.
 The detection prompt is editable too, like the other node prompts
 (`detection_prompt` / `detection_system_prompt` in **Settings → p**).
 
+### Create a preset in the TUI
+
+**Settings → 0 → n**, then two inputs:
+
+```
+Preset name: WIS service docs
+Fields (comma-separated, in order): doc_code, title, models, date
+```
+
+The field list is the single source of truth: it becomes the filename schema
+(`{doc_code} - {title} - {models} - {date}`) **and** the JSON schema the vision
+model is asked to return (`confidence` and `needs_human` are added automatically).
+Then:
+
+```
+  e edit prompt   f edit filename   d edit description   t test   s save   c cancel
+```
+
+- `t` classifies one real file with the **unsaved** draft and prints the extracted
+  fields and the resulting filename — iterate until it's right (skips if Ollama is
+  offline).
+- `s` saves it to `config.json`, activates it, and it's immediately available to
+  `detect`, `run`, and YOLO.
+- `e`/`x` in the preset menu edit or delete existing **user** presets (built-ins
+  can be shadowed but not changed). Advanced knobs — mode, detection
+  `regex`/`keywords`, system prompt — stay editable via `e`.
+
 ## Model per node
 
 Two independent nodes:

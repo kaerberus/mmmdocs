@@ -254,12 +254,24 @@ class App:
                 print("  %2d  %-14s%s %s%s" % (i, name, origin, body.get("label", ""), mark))
                 if body.get("name_template"):
                     print("      %s%s" % (_c("template: ", "90"), body["name_template"]))
+            print("  n   New preset")
+            print("  e   Edit a user preset")
+            print("  x   Delete a user preset")
             print("  d   Detect automatically  (method: %s)" % self.cfg.get("detect_method"))
             print("  m   Detection method")
             print("  b   Back")
             choice = input("> ").strip().lower()
             if choice == "b" or not choice:
                 return
+            if choice == "n":
+                self._new_preset()
+                continue
+            if choice == "e":
+                self._edit_preset()
+                continue
+            if choice == "x":
+                self._delete_preset()
+                continue
             if choice == "d":
                 self._detect_and_suggest()
                 _pause()
@@ -274,6 +286,182 @@ class App:
                 self._apply_preset(names[int(choice) - 1])
                 ok("Preset set to %s" % self.cfg.get("preset"))
                 _pause()
+
+    # ---------------------------------------------------------- preset builder
+    def _refresh_presets(self):
+        self.cfg["_presets"] = self.pipeline.preset_lib.all_presets(self.cfg.get("presets"))
+
+    def _first_pdf(self):
+        try:
+            pdfs = sorted(n for n in os.listdir(self.directory) if n.lower().endswith(".pdf"))
+            return os.path.join(self.directory, pdfs[0]) if pdfs else ""
+        except OSError:
+            return ""
+
+    def _pick_user_preset(self):
+        names = sorted(self.cfg.get("presets") or {})
+        if not names:
+            warn("No user presets yet (n to create one).")
+            _pause()
+            return None
+        presets = self.cfg.get("presets") or {}
+        for i, name in enumerate(names, 1):
+            print("  %d  %-18s %s" % (i, name, presets[name].get("label", "")))
+        print("  b  Back")
+        choice = input("> ").strip().lower()
+        if choice.isdigit() and 1 <= int(choice) <= len(names):
+            return names[int(choice) - 1]
+        return None
+
+    def _new_preset(self):
+        _clear()
+        self.header()
+        print(_c("New preset", "1"))
+        name = input("Preset name: ").strip()
+        if not name:
+            warn("Cancelled.")
+            _pause()
+            return
+        raw = input("Fields (comma-separated, in order): ").strip()
+        fields = [f.strip() for f in raw.split(",") if f.strip()]
+        if not fields:
+            warn("No fields given.")
+            _pause()
+            return
+        draft = self.pipeline.preset_lib.build_from_fields(name, fields)
+        self._preset_accept(draft, is_new=True)
+
+    def _edit_preset(self):
+        _clear()
+        self.header()
+        print(_c("Edit preset", "1"))
+        pid = self._pick_user_preset()
+        if not pid:
+            return
+        draft = dict((self.cfg.get("presets") or {})[pid])
+        self._preset_accept(draft, is_new=False, preset_id=pid)
+
+    def _delete_preset(self):
+        _clear()
+        self.header()
+        print(_c("Delete preset", "1"))
+        pid = self._pick_user_preset()
+        if not pid:
+            return
+        if not ask("Delete preset %r?" % pid, default=False):
+            return
+        presets = dict(self.cfg.get("presets") or {})
+        presets.pop(pid, None)
+        self.cfg["presets"] = presets
+        if self.cfg.get("preset") == pid:
+            self.cfg["preset"] = "books"
+        self._refresh_presets()
+        path = self.pipeline.save_config(self.cfg)
+        ok("Deleted %r (%s)" % (pid, path))
+        _pause()
+
+    def _preset_accept(self, draft, is_new=False, preset_id=None):
+        preset_lib = self.pipeline.preset_lib
+        while True:
+            _clear()
+            self.header()
+            pid = preset_id or preset_lib.make_id(draft.get("label"))
+            fields = preset_lib.fields_from_prompt(draft.get("vision_prompt"))
+            print(_c("Preset: %s" % pid, "1"))
+            print("  label:       %s" % draft.get("label"))
+            print("  filename:    %s" % draft.get("name_template"))
+            print("  mode:        %s" % draft.get("mode"))
+            print("  description: %s" % draft.get("description"))
+            print(_c("  prompt:", "90"))
+            for line in textwrap.wrap(draft.get("vision_prompt") or "", 100)[:10]:
+                print("    %s" % line)
+            ghost = preset_lib.unknown_placeholders(draft.get("name_template"), fields)
+            if ghost:
+                warn("template uses fields the prompt may not return: %s" % ", ".join(ghost))
+            print("\n  e edit prompt   f edit filename   d edit description   t test   s save   c cancel")
+            choice = input("> ").strip().lower()
+            if choice == "c" or not choice:
+                return
+            if choice == "e":
+                edited = self._edit_in_editor(draft.get("vision_prompt") or "")
+                if edited:
+                    draft["vision_prompt"] = edited
+            elif choice == "f":
+                print("available: %s" % ", ".join("{%s}" % f for f in fields))
+                value = input("Filename template [%s]: " % draft.get("name_template")).strip()
+                if value:
+                    draft["name_template"] = value
+            elif choice == "d":
+                value = input("Description [%s]: " % draft.get("description")).strip()
+                if value:
+                    draft["description"] = value
+            elif choice == "t":
+                self._test_preset(draft, pid)
+            elif choice == "s":
+                self._save_preset(pid, draft, is_new)
+                return
+
+    def _test_preset(self, draft, pid):
+        default = self._first_pdf()
+        raw = _readline_input("Test file [%s]: " % (os.path.basename(default) or "none"))
+        path = os.path.abspath(os.path.expanduser(raw)) if raw else default
+        if not path or not os.path.isfile(path):
+            warn("No file to test.")
+            _pause()
+            return
+        if not self.reachable:
+            warn("Ollama is offline; cannot test now.")
+            _pause()
+            return
+        cfg = dict(self.cfg)
+        presets_copy = {k: dict(v) for k, v in (self.cfg.get("presets") or {}).items()}
+        presets_copy[pid] = draft
+        cfg["presets"] = presets_copy
+        cfg["_presets"] = self.pipeline.preset_lib.all_presets(presets_copy)
+        cfg["preset"] = pid
+        # Use the draft verbatim, ignoring any session overrides.
+        cfg["vision_prompt"] = draft.get("vision_prompt")
+        cfg["name_template"] = draft.get("name_template")
+        if "vision_system_prompt" in draft:
+            cfg["vision_system_prompt"] = draft.get("vision_system_prompt")
+        self.pipeline.normalize_config(cfg)
+        info = self._safe("info", lambda: self.pipeline.engine.info_data(path))
+        if info is None:
+            return
+        rec = self._safe("test", lambda: self.pipeline.classify_record(path, info, cfg))
+        if rec is None:
+            return
+        name = self.pipeline.naming.render_filename(rec, draft.get("name_template"), os.path.basename(path))
+        print(_c("\nExtracted:", "1"))
+        for key in self.pipeline.preset_lib.fields_from_prompt(draft.get("vision_prompt")):
+            print("  %s: %r" % (key, rec.get(key)))
+        print("  needs_human: %s" % rec.get("needs_human"))
+        print(_c("\nFilename: %s" % (name or "(kept original: %s)" % os.path.basename(path)), "32"))
+        _pause()
+
+    def _save_preset(self, pid, draft, is_new):
+        presets = self.cfg.get("presets") or {}
+        if is_new and pid in presets:
+            if not ask("Preset %r already exists. Overwrite?" % pid, default=False):
+                return
+        if is_new and pid in self.pipeline.preset_lib.BUILTIN_PRESETS:
+            if not ask("%r shadows a built-in. Continue?" % pid, default=True):
+                return
+        presets = dict(presets)
+        presets[pid] = draft
+        self.cfg["presets"] = presets
+        # Activate: clear the preset-owned overrides so the preset is authoritative.
+        self.cfg["vision_prompt"] = None
+        self.cfg["vision_system_prompt"] = None
+        self.cfg["name_template"] = naming.DEFAULT_TEMPLATE
+        self.cfg["mode"] = "rename"
+        self.cfg["preset"] = pid
+        self._refresh_presets()
+        self.pipeline.normalize_config(self.cfg)
+        self.pipeline.apply_active_preset(self.cfg)
+        path = self.pipeline.save_config(self.cfg)
+        ok("Saved preset %r to %s" % (pid, path))
+        _pause()
 
     # ---------------------------------------------------------------- startup
     def startup(self):

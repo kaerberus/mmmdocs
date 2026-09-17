@@ -108,6 +108,85 @@ def preset_defaults(preset_map, name):
     return {key: body[key] for key in _PRESET_KEYS if key in body}
 
 
+FIELD_HINTS = {
+    "title": "the printed title",
+    "author": "author, editor, or architect",
+    "year": "publication year",
+    "date": "the document date",
+    "doc_code": "the document code",
+    "code": "the document code",
+    "model": "the model or type designation",
+    "models": "the applicable models",
+    "serial": "the serial number",
+    "part_number": "the part number",
+    "manufacturer": "the manufacturer",
+    "publisher": "the publisher",
+    "issue": "the issue number",
+    "volume": "the volume",
+    "revision": "the revision",
+    "rev": "the revision",
+    "language": "the language",
+    "topics": "subject tags",
+    "family": "the document family or prefix",
+}
+
+
+def describe_field(name):
+    name = str(name).strip()
+    return FIELD_HINTS.get(name.lower(), "the " + name.replace("_", " "))
+
+
+def make_id(name):
+    """Slugify a preset name into an id."""
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", str(name)).strip("-").lower()
+    return slug or "preset"
+
+
+def build_from_fields(name, fields, separator=" - "):
+    """Build a preset from a name and an ordered field list.
+
+    The fields drive both the filename template and the JSON schema the vision
+    model is asked to return, so there is a single source of truth.
+    """
+    fields = [str(f).strip() for f in fields if str(f).strip()]
+    if not fields:
+        return None
+    template = separator.join("{%s}" % f for f in fields)
+    schema = ['  "%s": "%s"' % (f, describe_field(f)) for f in fields]
+    schema += ['  "confidence": 0.0', '  "needs_human": false']
+    prompt = (
+        "Read this document and return ONLY JSON with exactly these keys:\n{\n"
+        + ",\n".join(schema)
+        + "\n}\n\nBase every value on what is printed on the page. Use an empty "
+        "string when a value is missing. If the document is unreadable or ambiguous, "
+        "set \"needs_human\": true. Output JSON only."
+    )
+    return {
+        "label": str(name).strip() or "Untitled preset",
+        "description": "Documents described by fields: %s." % ", ".join(fields),
+        "name_template": template,
+        "mode": "rename",
+        "vision_prompt": prompt,
+    }
+
+
+def fields_from_prompt(prompt):
+    """JSON keys found in a prompt, in order (for showing what's available)."""
+    seen = []
+    for match in re.finditer(r'"([A-Za-z_][A-Za-z0-9_-]*)"\s*:', prompt or ""):
+        key = match.group(1)
+        if key not in seen:
+            seen.append(key)
+    return seen
+
+
+def unknown_placeholders(template, fields):
+    """Placeholders in a template that the field list does not define."""
+    known = {str(f).strip() for f in fields}
+    used = re.findall(r"\{([^{}]+)\}", template or "")
+    return [u for u in used if u not in known]
+
+
 def _natural_key(name):
     return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", name)]
 
