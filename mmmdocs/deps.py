@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 import time
 import urllib.error
 import urllib.request
@@ -53,10 +54,22 @@ def ok(message):
         print(_c("✓ ", "32") + message)
 
 
-def ask(prompt, default=True):
-    suffix = " [Y/n] " if default else " [y/N] "
+def terminal_width(fallback=80):
     try:
-        answer = input(_c(prompt, "1") + suffix).strip().lower()
+        return max(20, shutil.get_terminal_size((fallback, 24)).columns)
+    except Exception:
+        return fallback
+
+
+def ask(prompt, default=True):
+    """Print the question (wrapped, so a long prompt never wraps inside input())
+    then read a short answer. Avoids readline redraw jumbles on narrow terminals."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    lines = textwrap.wrap(prompt, width=terminal_width()) or [prompt]
+    for line in lines:
+        print(_c(line, "1"))
+    try:
+        answer = input("  %s > " % suffix).strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
         return False

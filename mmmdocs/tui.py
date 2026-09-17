@@ -15,7 +15,7 @@ import tempfile
 import textwrap
 
 from . import naming, progress, templates
-from .deps import ask, info, ok, warn, _c, ollama_reachable
+from .deps import ask, info, ok, warn, _c, ollama_reachable, terminal_width
 
 
 PROMPT_LABELS = [
@@ -34,10 +34,53 @@ def _clear():
 
 
 def _pause():
+    print(_c("\nPress Enter to continue...", "90"))
     try:
-        input(_c("\nPress Enter to continue...", "90"))
+        input()
     except (EOFError, KeyboardInterrupt):
         print()
+
+
+def _disable_mouse():
+    """Turn off mouse reporting in case a previous program left it enabled.
+    mmmdocs never enables it, so clicks are never read as input."""
+    if not sys.stdout.isatty():
+        return
+    try:
+        sys.stdout.write("\033[?1000l\033[?1002l\033[?1003l\033[?1006l")
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+
+def _print_wrapped(text, style=None):
+    for line in textwrap.wrap(text, width=terminal_width()) or [text]:
+        print(_c(line, style) if style else line)
+
+
+def _choose(question, options, default=None):
+    """Print a question and its key options on their own lines, then read a
+    short answer (keeps the input prompt from ever wrapping)."""
+    _print_wrapped(question, "1")
+    for option in options:
+        print("  " + option)
+    try:
+        answer = input("> ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    return answer or (default or "")
+
+
+def _prompt(label, default=None):
+    """Print a label (with an optional default) then read a short line."""
+    text = "%s [%s]" % (label, default) if default not in (None, "") else label
+    _print_wrapped(text, "1")
+    try:
+        return input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return ""
 
 
 def _config_path(argv):
@@ -70,7 +113,9 @@ def _apply_cli_overrides(argv, cfg):
     return cfg
 
 
-def _shorten(path, width=54):
+def _shorten(path, width=None):
+    if width is None:
+        width = max(24, terminal_width() - 12)
     if len(path) <= width:
         return path
     return "..." + path[-(width - 3):]
@@ -328,7 +373,7 @@ class App:
             warn("Cancelled.")
             _pause()
             return
-        raw = input("Fields (comma-separated, in order): ").strip()
+        raw = _prompt("Fields (comma-separated, in order):")
         fields = [f.strip() for f in raw.split(",") if f.strip()]
         if not fields:
             warn("No fields given.")
@@ -405,11 +450,11 @@ class App:
                     draft["vision_prompt"] = edited
             elif choice == "f":
                 print("available: %s" % ", ".join("{%s}" % f for f in fields))
-                value = input("Filename template [%s]: " % draft.get("name_template")).strip()
+                value = _prompt("Filename template", draft.get("name_template"))
                 if value:
                     draft["name_template"] = value
             elif choice == "d":
-                value = input("Description [%s]: " % draft.get("description")).strip()
+                value = _prompt("Description", draft.get("description"))
                 if value:
                     draft["description"] = value
             elif choice == "t":
@@ -420,7 +465,8 @@ class App:
 
     def _test_preset(self, draft, pid):
         default = self._first_pdf()
-        raw = _readline_input("Test file [%s]: " % (os.path.basename(default) or "none"))
+        _print_wrapped("Test file [%s]" % (os.path.basename(default) or "none"), "1")
+        raw = _readline_input("> ")
         path = os.path.abspath(os.path.expanduser(raw)) if raw else default
         if not path or not os.path.isfile(path):
             warn("No file to test.")
@@ -492,7 +538,8 @@ class App:
 
     def prompt_directory(self):
         while True:
-            raw = _readline_input(_c("Directory [%s]: " % _shorten(self.directory, 70), "1"))
+            _print_wrapped("Directory [%s]" % _shorten(self.directory), "1")
+            raw = _readline_input("> ")
             path = os.path.abspath(os.path.expanduser(raw)) if raw else self.directory
             if os.path.isdir(path):
                 self.directory = path
@@ -512,7 +559,8 @@ class App:
             print(line)
             if i % per == 0 and i != len(lines):
                 try:
-                    more = input(_c("  -- Enter for more (%d/%d), q to stop --" % (i, len(lines)), "90")).strip().lower()
+                    print(_c("  -- Enter for more (%d/%d), q to stop --" % (i, len(lines)), "90"))
+                    more = input().strip().lower()
                 except (EOFError, KeyboardInterrupt):
                     print()
                     return
@@ -582,8 +630,10 @@ class App:
             print(_c("  groups -> %s" % path, "90"))
         if not scan.get("mixed") or not scan.get("groups"):
             return None
-        choice = input("[Enter] process all %d groups   g pick one   c cancel: "
-                       % len(scan["groups"])).strip().lower()
+        choice = _choose("Process the groups?", [
+            "[Enter] process all %d groups" % len(scan["groups"]),
+            "g       pick one group",
+            "c       cancel"])
         groups = self.pipeline.preset_lib.groups_from_scan(scan, self.cfg)
         if choice == "c" or not groups:
             return None
@@ -613,7 +663,12 @@ class App:
             print("  fields: %s" % ", ".join(fields))
             if report.get("reason"):
                 print(_c("  %s %s" % (report.get("method"), report.get("reason")), "90"))
-            choice = input("[Enter] use proposed   e edit & save   p pick   n new (blank)   k keep current: ").strip().lower()
+            choice = _choose("Use the proposed schema?", [
+                "[Enter] use it for this run",
+                "e       edit & save in the builder",
+                "p       pick another preset",
+                "n       new blank preset",
+                "k       keep current"])
             if choice == "e":
                 self._new_preset(prefill={"label": label, "fields": fields})
             elif choice == "p":
@@ -635,7 +690,11 @@ class App:
                 report.get("method"), report.get("confidence", 0.0), report.get("reason", "")), "90"))
             print("  current: %s [%s]   template: %s" % (
                 cur.get("label", current), current, self.cfg.get("name_template")))
-            choice = input("[Y] use detected   k keep current   p pick   n new preset: ").strip().lower()
+            choice = _choose("Use the detected type?", [
+                "[Y]     use detected",
+                "k       keep current",
+                "p       pick another preset",
+                "n       new preset"], default="y")
             if choice == "k":
                 pass
             elif choice == "p":
@@ -650,7 +709,10 @@ class App:
                 detected.get("name_template") or self.cfg.get("name_template")))
             print(_c("  %s %.2f \u2014 %s" % (
                 report.get("method"), report.get("confidence", 0.0), report.get("reason", "")), "90"))
-            choice = input("[Enter] continue   p pick   n new preset: ").strip().lower()
+            choice = _choose("Continue?", [
+                "[Enter] continue",
+                "p       pick another preset",
+                "n       new preset"])
             if choice == "p":
                 self.choose_preset()
             elif choice == "n":
@@ -850,7 +912,10 @@ class App:
             print("Nothing to change.")
             _pause()
             return
-        answer = input("\nApply now? [y/N]   (f = force, includes flagged)  ").strip().lower()
+        answer = _choose("Apply now?", [
+            "[y] apply the %d change(s)" % preview["moved"],
+            "[n] keep the plan for later",
+            "[f] force, including flagged files"])
         if answer not in ("y", "yes", "f", "force"):
             print("Plan saved — press 1 to review it again later.")
             _pause()
@@ -997,7 +1062,7 @@ class App:
                 print("fields: {title} {author} {year} {doc_type} {language} {topics}")
                 print("plus any custom field your vision prompt returns")
                 print("default: %s" % naming.DEFAULT_TEMPLATE)
-                value = input("Name template (empty resets to default): ").strip()
+                value = _prompt("Name template (empty resets to default)")
                 self.cfg["name_template"] = value or naming.DEFAULT_TEMPLATE
                 ok("Name template = %s" % self.cfg["name_template"])
             elif choice == "6":
@@ -1072,7 +1137,8 @@ class App:
             print("  %s" % line)
         if len(current) > 2400:
             print("  ... (%d chars total)" % len(current))
-        value = input(_c("\nnew prompt (type 'edit' to open in $EDITOR, or Enter to reset): ", "1")).strip()
+        _print_wrapped("new prompt (type 'edit' to open in $EDITOR, or Enter to reset)", "1")
+        value = input("> ").strip()
         if not value:
             self.cfg[key] = None
             ok("Reset %s to default" % label)
@@ -1151,9 +1217,12 @@ def run_tui(argv=None):
     if not sys.stdin.isatty():
         print("No interactive terminal detected. Use `mmmdocs --help` for commands.")
         return
+    _disable_mouse()
     try:
         app = App(argv)
         app.startup()
         app.run()
     except KeyboardInterrupt:
         print()
+    finally:
+        _disable_mouse()
