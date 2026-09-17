@@ -140,7 +140,7 @@ Everything secondary lives here:
   2  Prompts                   (6, per node)
   3  Mode                      (rename)
   4  Name template             ({author} - {title} ({year}))
-  5  Models & performance      -> vision/orchestrator, workers, profile, host
+  5  Models & performance      -> vision/detection, workers, profile, host
   6  Detection method          (model)
   ------ folder tools ------
   7  Scan folder (manifest)
@@ -233,7 +233,7 @@ mmmdocs run DIR
       ├─ workers    ONE isolated process per PDF:
       │               render pages 1-3 (profile classify, ~35 KB each)
       │               + optional text excerpt -> ONE vision call -> JSON record
-      ├─ taxonomy   one orchestrator call groups titles into folders
+      ├─ folders    one folders-model call names folders (move modes only)
       │             (only when the mode moves files; deterministic fallback)
       └─ write      catalog.json + move-plan.json       (nothing is changed yet)
 
@@ -269,7 +269,7 @@ TUI); they appear in the picker and in detection.
 
 - Heuristics score every preset's `detect` signature (`regex`/`keywords`) against
   the sample — always computed.
-- The **detection node** (default: the orchestrator) then chooses, using a
+- The **detection node** (default: the vision model) then chooses, using a
   configurable prompt that includes the heuristic scores and flags user-defined
   presets. A strong match on a user preset beats a generic model pick.
 - `detect_method`: `model` (default), `auto` (heuristics first, model only when
@@ -354,7 +354,7 @@ mmmdocs run "/path/to/docs" \
 
 **You own the output schema**: every extra JSON field the model returns is
 preserved and can be referenced in `name_template` (a `title` is not required).
-Unreadable or ambiguous items should set `"needs_human": true`. The taxonomy prompt
+Unreadable or ambiguous items should set `"needs_human": true`. The folder-naming prompt
 must still return `{"folders": {...}, "reason": "..."}`, and grouping needs a
 non-empty `title` (rename mode does not).
 
@@ -365,9 +365,9 @@ non-empty `title` (rename mode does not).
 | mode | folder | filename |
 | --- | --- | --- |
 | `catalog` | unchanged | unchanged |
-| `move` | taxonomy folders | unchanged |
+| `move` | generated folders | unchanged |
 | `rename` | current folder | template name |
-| `rename-move` | taxonomy folders | template name |
+| `rename-move` | generated folders | template name |
 
 Filenames come from `--name-template` (config `name_template`, default
 `{author} - {title} ({year})`). Fields: `{title}`, `{author}`, `{year}`,
@@ -393,24 +393,29 @@ produce no name keep their original filename and are flagged for review.
 
 ## Model per node
 
-- **vision node** — reads the cover/title page and produces the record.
-- **orchestrator node** — groups the records into folders (and drives detection).
+Three nodes, each independently configurable:
+
+- **vision node** — reads the cover/title page and produces the record (per file).
+- **detection node** — classifies the *folder* → preset/schema (one call per run).
+- **folders node** — names folders for `move`/`rename-move` (one call; unused in
+  the default `rename` mode).
 
 They can be different models, locally or in the cloud:
 
 ```bash
 mmmdocs run /path/to/books \
   --vision-model gemma4:e4b \
-  --orchestrator-input openai --orchestrator-model deepseek-chat \
+  --detection-input openai --detection-model deepseek-chat \
+  --folders-model gemma4:e4b \
   --openai-api-key "$DEEPSEEK_API_KEY"
 ```
 
-Flags: `--vision-model`, `--vision-input ollama|openai`, `--orchestrator-model`,
-`--orchestrator-input`, `--ollama-host`, `--openai-base-url`, `--openai-api-key`,
-`--workers`, `--profile`.
+Flags: `--vision-model`, `--vision-input`, `--detection-model`, `--detection-input`,
+`--folders-model`, `--folders-input`, `--ollama-host`, `--openai-base-url`,
+`--openai-api-key`, `--workers`, `--profile`.
 
 > The vision node must be **vision-capable** (the `gemma4:*` family is). Text-only
-> models such as `qwen3.8:27b` should only be the orchestrator/detection node.
+> models such as `qwen3.8:27b` fit the detection/folders nodes.
 
 ## Configuration
 
@@ -422,8 +427,8 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | --- | --- | --- |
 | `vision_input` | `ollama` | `ollama` or `openai` |
 | `vision_model` | `gemma4:e4b` | model that reads covers |
-| `orchestrator_input` | `ollama` | `ollama` or `openai` |
-| `orchestrator_model` | *(null)* | falls back to `vision_model` |
+| `detection_input` / `detection_model` | *(null)* | folder classification node (defaults: `ollama` / `vision_model`) |
+| `folders_input` / `folders_model` | *(null)* | folder-naming node (defaults: `ollama` / `detection_model`) |
 | `ollama_host` | `http://localhost:11434` | Ollama server |
 | `openai_base_url` | `https://api.deepseek.com/v1` | any OpenAI-compatible base |
 | `openai_api_key` | *(null)* | required for the `openai` backend |
@@ -437,9 +442,8 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | `mode` | `rename` | `catalog`, `move`, `rename`, or `rename-move` |
 | `name_template` | `{author} - {title} ({year})` | filename template |
 | `vision_prompt` / `vision_system_prompt` | *(null)* | classifier instruction / system |
-| `orchestrator_prompt` / `orchestrator_system_prompt` | *(null)* | taxonomy instruction / system |
 | `detection_prompt` / `detection_system_prompt` | *(null)* | detection instruction / system |
-| `detection_input` / `detection_model` | *(null)* | node used for detection (default: orchestrator) |
+| `folders_prompt` / `folders_system_prompt` | *(null)* | folder-naming instruction / system |
 | `detect_method` | `model` | `model`, `auto`, or `heuristic` |
 | `detect_sample` | `15` | files sampled during detection |
 | `detect_fields` | `true` | let detection propose a schema when nothing fits |
@@ -457,6 +461,9 @@ travel with the folder). CLI flags override the file, and the TUI writes it with
 | `preset` | `books` | active preset, or `auto`, or `custom` |
 | `presets` | `{}` | user-defined presets (see `config.example.json`) |
 
+> Renamed: the old `orchestrator_*` keys/flags were split into `detection_*`
+> (folder classification) and `folders_*` (folder naming). Old names are ignored —
+> update your `config.json`/scripts accordingly.
 
 ## Output files
 

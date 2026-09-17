@@ -674,9 +674,8 @@ def model_detect(samples, preset_map, cfg, scores=None, mined=None):
          "user_defined": name not in BUILTIN_PRESETS}
         for name, body in preset_map.items()
     ]
-    backend = cfg.get("detection_input") or cfg.get("orchestrator_input") or "ollama"
-    model = (cfg.get("detection_model") or cfg.get("orchestrator_model")
-             or cfg.get("vision_model"))
+    backend = cfg.get("detection_input") or "ollama"
+    model = cfg.get("detection_model") or cfg.get("vision_model")
     user = templates.build_detection_user(
         listing, samples, cfg.get("detection_prompt"), scores, mined)
     raw = nodes.chat(

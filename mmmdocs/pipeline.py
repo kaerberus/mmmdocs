@@ -1,9 +1,9 @@
-"""Orchestration: one isolated classification per file, then a dry-run plan.
+"""Pipeline: one isolated classification per file, then a dry-run plan.
 
 Design goal: a small local vision model never sees more than one file at a time.
 Each file is classified in its own worker process with its own messages and its
-own 1-3 images, so no cross-file context can confuse the title. The orchestrator
-(which may be a cloud model) only ever sees compact JSON records.
+own 1-3 images, so no cross-file context can confuse the title. The optional
+detection/folders models only ever see compact JSON records.
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from . import engine, naming, nodes, presets as preset_lib, templates
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROMPT_KEYS = (
     "vision_prompt", "vision_system_prompt",
-    "orchestrator_prompt", "orchestrator_system_prompt",
     "detection_prompt", "detection_system_prompt",
+    "folders_prompt", "folders_system_prompt",
 )
 
 # catalog: no changes; move: re-folder only; rename: rename in place;
@@ -31,8 +31,6 @@ MODES = ("catalog", "move", "rename", "rename-move")
 DEFAULT_CONFIG = {
     "vision_input": "ollama",          # ollama | openai
     "vision_model": "gemma4:e4b",
-    "orchestrator_input": "ollama",    # ollama | openai
-    "orchestrator_model": None,        # None -> use vision_model
     "ollama_host": "http://localhost:11434",
     "openai_base_url": "https://api.deepseek.com/v1",
     "openai_api_key": None,
@@ -49,14 +47,17 @@ DEFAULT_CONFIG = {
     # "<key>_file" path may be set instead of inlining a long prompt.
     "vision_prompt": None,
     "vision_system_prompt": None,
-    "orchestrator_prompt": None,
-    "orchestrator_system_prompt": None,
     # Detection ("what kind of folder is this"): model by default, heuristics
     # always computed as corroboration/fallback. Use "auto" for heuristics first.
     "detection_prompt": None,
     "detection_system_prompt": None,
-    "detection_input": None,           # None -> orchestrator_input
-    "detection_model": None,           # None -> orchestrator_model
+    "detection_input": None,           # None -> ollama
+    "detection_model": None,           # None -> vision_model
+    # Folder naming (only used when the mode moves files).
+    "folders_prompt": None,
+    "folders_system_prompt": None,
+    "folders_input": None,             # None -> ollama
+    "folders_model": None,             # None -> detection_model
     "detect_method": "model",          # model | auto | heuristic
     "detect_sample": 15,
     "detect_fields": True,             # allow detection to propose a schema
@@ -130,9 +131,10 @@ def load_config(path=None):
 
 def normalize_config(cfg):
     """Apply reset-to-default semantics and load any "<key>_file" prompts."""
-    cfg["orchestrator_model"] = cfg.get("orchestrator_model") or cfg["vision_model"]
-    cfg["detection_input"] = cfg.get("detection_input") or cfg.get("orchestrator_input")
-    cfg["detection_model"] = cfg.get("detection_model") or cfg.get("orchestrator_model")
+    cfg["detection_input"] = cfg.get("detection_input") or "ollama"
+    cfg["detection_model"] = cfg.get("detection_model") or cfg["vision_model"]
+    cfg["folders_input"] = cfg.get("folders_input") or "ollama"
+    cfg["folders_model"] = cfg.get("folders_model") or cfg["detection_model"]
     cfg["name_template"] = cfg.get("name_template") or naming.DEFAULT_TEMPLATE
     if not cfg.get("_presets"):
         cfg["_presets"] = preset_lib.all_presets(cfg.get("presets"))
@@ -155,7 +157,10 @@ def save_config(cfg, path=None):
     existing = _read_json(path) or {}
     for key, default in DEFAULT_CONFIG.items():
         value = cfg.get(key)
-        if key == "orchestrator_model" and value == cfg.get("vision_model"):
+        if key == "detection_model" and value == cfg.get("vision_model"):
+            existing.pop(key, None)  # derived; do not pin it
+            continue
+        if key == "folders_model" and value == cfg.get("detection_model"):
             existing.pop(key, None)  # derived; do not pin it
             continue
         if value is None or value == default:
@@ -317,23 +322,23 @@ def _det_folder(rec):
     return _slug_folder(doc_type + ("/" + topic if topic else ""))
 
 
-def propose_taxonomy(records, cfg):
+def propose_folders(records, cfg):
     titled = [r for r in records if r.get("title")]
     if not titled:
         return {}, "no titles"
     try:
-        user = templates.build_taxonomy_user(titled, cfg.get("orchestrator_prompt"))
+        user = templates.build_folders_user(titled, cfg.get("folders_prompt"))
         raw = nodes.chat(
-            cfg["orchestrator_input"], cfg["orchestrator_model"],
-            cfg.get("orchestrator_system_prompt") or templates.TAXONOMY_SYSTEM,
-            user, **_backend_opts(cfg, cfg["orchestrator_input"]),
+            cfg["folders_input"], cfg["folders_model"],
+            cfg.get("folders_system_prompt") or templates.FOLDERS_SYSTEM,
+            user, **_backend_opts(cfg, cfg["folders_input"]),
         )
         data = nodes.parse_json(raw)
         folders = data.get("folders") or {}
         mapping = {str(k): str(v) for k, v in folders.items()}
         return mapping, str(data.get("reason") or "")
     except BaseException as exc:
-        print("[mmmdocs] taxonomy model failed (%s); using deterministic folders" % exc, file=sys.stderr)
+        print("[mmmdocs] folders model failed (%s); using deterministic folders" % exc, file=sys.stderr)
         return {}, "deterministic fallback"
 
 
@@ -376,7 +381,7 @@ def resolve_current_path(record, root, index):
     return matches[0] if len(matches) == 1 else None
 
 
-def build_move_plan(root, records, taxonomy, mode="rename", name_template=None, apply_log=None):
+def build_move_plan(root, records, folder_map, mode="rename", name_template=None, apply_log=None):
     rename, move = mode_flags(mode)
     index = apply_log if apply_log is not None else _load_apply_log(root)
     plan = []
@@ -401,7 +406,7 @@ def build_move_plan(root, records, taxonomy, mode="rename", name_template=None, 
 
         original = os.path.basename(src)
         if move:
-            folder = _slug_folder(taxonomy.get(rec.get("title")) or _det_folder(rec))
+            folder = _slug_folder(folder_map.get(rec.get("title")) or _det_folder(rec))
         else:
             rel = os.path.relpath(os.path.dirname(src), root)
             folder = "" if rel == "." else rel
@@ -606,22 +611,24 @@ def run(directory, cfg, only=None, limit=None, keep_duplicates=False, on_phase=N
     mode = cfg.get("mode", "rename")
     rename, move = mode_flags(mode)
     if move:
-        taxonomy, reason = propose_taxonomy(records, cfg)
+        folder_map, reason = propose_folders(records, cfg)
     else:
-        taxonomy, reason = {}, "not grouping (mode=%s)" % mode
-    plan = build_move_plan(root, records, taxonomy, mode, cfg.get("name_template"))
+        folder_map, reason = {}, "not grouping (mode=%s)" % mode
+    plan = build_move_plan(root, records, folder_map, mode, cfg.get("name_template"))
 
     catalog = {
         "directory": root,
         "vision_input": cfg["vision_input"],
         "vision_model": cfg["vision_model"],
-        "orchestrator_input": cfg["orchestrator_input"],
-        "orchestrator_model": cfg["orchestrator_model"],
+        "detection_input": cfg["detection_input"],
+        "detection_model": cfg["detection_model"],
+        "folders_input": cfg["folders_input"],
+        "folders_model": cfg["folders_model"],
         "preset": preset_name,
         "detection": detection,
         "mode": mode,
         "name_template": cfg.get("name_template"),
-        "taxonomy_reason": reason,
+        "folders_reason": reason,
         "count": len(records),
         "skipped_duplicates": sorted(skip),
         "records": records,
@@ -689,23 +696,25 @@ def run_groups(directory, cfg, groups, on_phase=None, manifest=None):
     all_records.sort(key=lambda r: r["file"])
     rename, move = mode_flags(mode)
     if move:
-        taxonomy, reason = propose_taxonomy(all_records, cfg)
+        folder_map, reason = propose_folders(all_records, cfg)
     else:
-        taxonomy, reason = {}, "mixed groups (%s)" % mode
+        folder_map, reason = {}, "mixed groups (%s)" % mode
     plan = []
     for gcfg, records in per_group:
-        plan += build_move_plan(root, records, taxonomy, mode, gcfg.get("name_template"))
+        plan += build_move_plan(root, records, folder_map, mode, gcfg.get("name_template"))
 
     catalog = {
         "directory": root,
         "vision_input": cfg["vision_input"],
         "vision_model": cfg["vision_model"],
-        "orchestrator_input": cfg["orchestrator_input"],
-        "orchestrator_model": cfg["orchestrator_model"],
+        "detection_input": cfg["detection_input"],
+        "detection_model": cfg["detection_model"],
+        "folders_input": cfg["folders_input"],
+        "folders_model": cfg["folders_model"],
         "preset": "mixed",
         "mode": mode,
         "name_template": "mixed",
-        "taxonomy_reason": reason,
+        "folders_reason": reason,
         "count": len(all_records),
         "skipped_duplicates": sorted(skip),
         "groups": group_meta,

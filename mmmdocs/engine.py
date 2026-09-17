@@ -312,7 +312,7 @@ def manifest_data(directory, recursive=False, pattern="*.pdf", sample=12):
             entry["error"] = str(exc)
         files.append(entry)
 
-    # Group by heuristic name_key so the orchestrator can dedupe before dispatch.
+    # Group by heuristic name_key so callers can dedupe before dispatch.
     groups = {}
     for f in files:
         groups.setdefault(f["name_key"], []).append(f["path"])

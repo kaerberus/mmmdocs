@@ -1,7 +1,7 @@
 """Model nodes: local Ollama and any OpenAI-compatible endpoint.
 
 Both backends expose one function that returns raw string content. The caller
-picks `ollama` (default, no API key) or `openai` (cloud orchestrator, e.g.
+picks `ollama` (default, no API key) or `openai` (a cloud model, e.g.
 DeepSeek), so the model per node is a configuration choice, not a code change.
 """
 from __future__ import annotations

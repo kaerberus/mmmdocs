@@ -21,10 +21,10 @@ from .deps import ask, info, ok, warn, _c, ollama_reachable, pull_model, termina
 PROMPT_LABELS = [
     ("vision_prompt", "Vision instruction", templates.CLASSIFY_INSTRUCTION),
     ("vision_system_prompt", "Vision system", templates.CLASSIFY_SYSTEM),
-    ("orchestrator_prompt", "Orchestrator instruction", templates.TAXONOMY_INSTRUCTION),
-    ("orchestrator_system_prompt", "Orchestrator system", templates.TAXONOMY_SYSTEM),
     ("detection_prompt", "Detection instruction", templates.DETECTION_INSTRUCTION),
     ("detection_system_prompt", "Detection system", templates.DETECTION_SYSTEM),
+    ("folders_prompt", "Folder naming instruction", templates.FOLDERS_INSTRUCTION),
+    ("folders_system_prompt", "Folder naming system", templates.FOLDERS_SYSTEM),
 ]
 
 
@@ -96,8 +96,10 @@ def _apply_cli_overrides(argv, cfg):
     mapping = {
         "--vision-model": "vision_model",
         "--vision-input": "vision_input",
-        "--orchestrator-model": "orchestrator_model",
-        "--orchestrator-input": "orchestrator_input",
+        "--detection-model": "detection_model",
+        "--detection-input": "detection_input",
+        "--folders-model": "folders_model",
+        "--folders-input": "folders_input",
         "--ollama-host": "ollama_host",
         "--openai-base-url": "openai_base_url",
         "--openai-api-key": "openai_api_key",
@@ -1001,7 +1003,7 @@ class App:
                 rec.get("confidence"),
                 flag,
             ))
-        print(_c("\n%s" % catalog.get("taxonomy_reason", ""), "90"))
+        print(_c("\n%s" % catalog.get("folders_reason", ""), "90"))
         _pause()
 
     def rebuild_plan(self):
@@ -1093,8 +1095,8 @@ class App:
             print(_c("Models & performance", "1"))
             print("  1  Vision model          (%s)" % self.cfg.get("vision_model"))
             print("  2  Vision backend        (%s)" % self.cfg.get("vision_input"))
-            print("  3  Orchestrator model    (%s)" % self.cfg.get("orchestrator_model"))
-            print("  4  Orchestrator backend  (%s)" % self.cfg.get("orchestrator_input"))
+            print("  3  Detection model       (%s)" % self.cfg.get("detection_model"))
+            print("  4  Detection backend     (%s)" % self.cfg.get("detection_input"))
             print("  5  Workers               (%s)" % self.cfg.get("workers"))
             print("  6  Render profile        (%s)" % self.cfg.get("profile"))
             print("  7  Ollama host           (%s)" % self.host)
@@ -1109,11 +1111,11 @@ class App:
                 if value in ("ollama", "openai"):
                     self.cfg["vision_input"] = value
             elif choice == "3":
-                self.cfg["orchestrator_model"] = input("Orchestrator model: ").strip() or self.cfg["orchestrator_model"]
+                self.cfg["detection_model"] = input("Detection model: ").strip() or self.cfg["detection_model"]
             elif choice == "4":
                 value = input("Backend (ollama/openai): ").strip()
                 if value in ("ollama", "openai"):
-                    self.cfg["orchestrator_input"] = value
+                    self.cfg["detection_input"] = value
             elif choice == "5":
                 value = input("Workers: ").strip()
                 if value.isdigit():

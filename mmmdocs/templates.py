@@ -51,9 +51,9 @@ REQUIRED_KEYS = [
     "language", "script", "evidence_pages", "confidence", "needs_human", "notes",
 ]
 
-TAXONOMY_SYSTEM = "You organize a book library into a small folder taxonomy. You output only JSON."
+FOLDERS_SYSTEM = "You organize a book library into a small folder taxonomy. You output only JSON."
 
-TAXONOMY_INSTRUCTION = """Below is a catalog of PDF records. Propose a SMALL folder taxonomy (at most 10 folders) that groups them sensibly. Prefer grouping by doc_type first, then by dominant subject.
+FOLDERS_INSTRUCTION = """Below is a catalog of PDF records. Propose a SMALL folder taxonomy (at most 10 folders) that groups them sensibly. Prefer grouping by doc_type first, then by dominant subject.
 
 Return ONLY JSON:
 {
@@ -128,7 +128,7 @@ def build_classify_user(path, info, text_excerpt, image_pages, instruction=None)
     return "\n\n".join(parts)
 
 
-def build_taxonomy_user(records, instruction=None):
+def build_folders_user(records, instruction=None):
     slim = [
         {
             "title": r.get("title") or "",
@@ -139,4 +139,4 @@ def build_taxonomy_user(records, instruction=None):
         for r in records
         if r.get("title")
     ]
-    return (instruction or TAXONOMY_INSTRUCTION) + "\n\n--- CATALOG ---\n" + json.dumps(slim, ensure_ascii=False, indent=2)
+    return (instruction or FOLDERS_INSTRUCTION) + "\n\n--- CATALOG ---\n" + json.dumps(slim, ensure_ascii=False, indent=2)

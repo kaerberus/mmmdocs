@@ -13,8 +13,10 @@ def _apply_overrides(cfg, args):
     for flag, key in (
         ("vision_model", "vision_model"),
         ("vision_input", "vision_input"),
-        ("orchestrator_model", "orchestrator_model"),
-        ("orchestrator_input", "orchestrator_input"),
+        ("detection_model", "detection_model"),
+        ("detection_input", "detection_input"),
+        ("folders_model", "folders_model"),
+        ("folders_input", "folders_input"),
         ("ollama_host", "ollama_host"),
         ("openai_base_url", "openai_base_url"),
         ("openai_api_key", "openai_api_key"),
@@ -23,8 +25,10 @@ def _apply_overrides(cfg, args):
         ("name_template", "name_template"),
         ("vision_prompt", "vision_prompt"),
         ("vision_system_prompt", "vision_system_prompt"),
-        ("orchestrator_prompt", "orchestrator_prompt"),
-        ("orchestrator_system_prompt", "orchestrator_system_prompt"),
+        ("detection_prompt", "detection_prompt"),
+        ("detection_system_prompt", "detection_system_prompt"),
+        ("folders_prompt", "folders_prompt"),
+        ("folders_system_prompt", "folders_system_prompt"),
         ("preset", "preset"),
         ("detect_method", "detect_method"),
         ("embed_model", "embed_model"),
@@ -235,8 +239,10 @@ def _add_model_flags(p):
     p.add_argument("--config", help="JSON config file")
     p.add_argument("--vision-model")
     p.add_argument("--vision-input", choices=["ollama", "openai"])
-    p.add_argument("--orchestrator-model")
-    p.add_argument("--orchestrator-input", choices=["ollama", "openai"])
+    p.add_argument("--detection-model")
+    p.add_argument("--detection-input", choices=["ollama", "openai"])
+    p.add_argument("--folders-model")
+    p.add_argument("--folders-input", choices=["ollama", "openai"])
     p.add_argument("--ollama-host")
     p.add_argument("--openai-base-url")
     p.add_argument("--openai-api-key")
@@ -268,10 +274,14 @@ def _add_prompt_flags(p):
                    help="override the per-file classifier instruction; empty resets to default")
     p.add_argument("--vision-system-prompt", dest="vision_system_prompt",
                    help="override the classifier system message; empty resets to default")
-    p.add_argument("--orchestrator-prompt", dest="orchestrator_prompt",
-                   help="override the taxonomy instruction; empty resets to default")
-    p.add_argument("--orchestrator-system-prompt", dest="orchestrator_system_prompt",
-                   help="override the taxonomy system message; empty resets to default")
+    p.add_argument("--detection-prompt", dest="detection_prompt",
+                   help="override the folder-detection instruction; empty resets to default")
+    p.add_argument("--detection-system-prompt", dest="detection_system_prompt",
+                   help="override the detection system message; empty resets to default")
+    p.add_argument("--folders-prompt", dest="folders_prompt",
+                   help="override the folder-naming instruction (move modes); empty resets to default")
+    p.add_argument("--folders-system-prompt", dest="folders_system_prompt",
+                   help="override the folder-naming system message; empty resets to default")
 
 
 def build_parser():
