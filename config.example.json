@@ -27,17 +27,17 @@
   "detect_sample": 15,
   "preset": "books",
 
-  "_comment_presets": "Add your own document presets here. They appear in the TUI preset picker and in detection. Copy the 'wis' example.",
+  "_comment_presets": "Add your own document presets here. They appear in the TUI preset picker (Settings -> 1) and in detection. The 'invoices' entry is a worked example; the TUI can generate one for you from a name + field list.",
   "presets": {
-    "wis": {
-      "label": "Mercedes WIS service docs",
-      "description": "DaimlerChrysler WIS print-outs; each page has a document code and a heading.",
-      "name_template": "{doc_code} - {title}",
+    "invoices": {
+      "label": "Invoices & receipts",
+      "description": "Bills and receipts; vendor, invoice number, date and total.",
+      "name_template": "{vendor} - {invoice_number} - {date}",
       "mode": "rename",
-      "vision_prompt": "You are given ONE Mercedes-Benz WIS (Workshop Information System) print-out page.\n\nRead the document code on the page (format XX00.00-P-0000Z or XX00.00-Z-0000ZZ, usually the top line), the printed heading/title, the models it applies to, and the document's own date (DD.MM.YY, e.g. 12.8.92). Ignore the \"Copyright DaimlerChrysler AG <date>\" and \"CD-Ausgabe G/09/05\" print-metadata lines; \"G/09/05\" is the catalog edition, NOT the document code. A document code always contains a hyphen and looks like XX00.00-P-0000Z (or XX00.00-Z-0000ZZ).\n\nReturn ONLY JSON:\n{\n  \"doc_code\": \"the WIS code, or \\\"\\\" if none is printed\",\n  \"title\": \"the printed heading/title\",\n  \"models\": \"the model list, or \\\"all\\\"\",\n  \"date\": \"the document date, or \\\"\\\"\",\n  \"family\": \"WS | SI | OS | AD | AH | AS | other\",\n  \"doc_type\": \"service-document\",\n  \"confidence\": 0.0,\n  \"needs_human\": false,\n  \"notes\": \"\"\n}\n\nIf no code is printed, set \"doc_code\" to \"\" and put the heading in \"title\".\nIf the heading is unreadable, set \"needs_human\": true.\nOutput JSON only.",
+      "vision_prompt": "Read this invoice or receipt and return ONLY JSON with exactly these keys:\n{\n  \"vendor\": \"the vendor or merchant name\",\n  \"invoice_number\": \"the invoice or receipt number, or \\\"\\\"\",\n  \"date\": \"the invoice date as YYYY-MM-DD, or \\\"\\\"\",\n  \"total\": \"the total amount including currency, or \\\"\\\"\",\n  \"confidence\": 0.0,\n  \"needs_human\": false\n}\n\nBase every value on what is printed on the page. Use an empty string when a value is missing. If the document is unreadable or ambiguous, set \"needs_human\": true. Output JSON only.",
       "detect": {
-        "regex": "[A-Z]{2}\\d{2}\\.\\d{2}-[A-Z]-\\d{3,4}",
-        "keywords": ["daimlerchrysler"]
+        "regex": "(?i)invoice\\s*(no|number|#)?\\s*[:#]?\\s*[A-Z0-9-]{3,}",
+        "keywords": ["invoice", "receipt", "total due", "amount due", "vat"]
       }
     }
   }

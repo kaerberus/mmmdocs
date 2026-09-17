@@ -143,13 +143,14 @@ and holds only the values you changed.
 **Settings → 1 → n**, then two inputs:
 
 ```
-Preset name: WIS service docs
-Fields (comma-separated, in order): doc_code, title, models, date
+Preset name: Invoices & receipts
+Fields (comma-separated, in order): vendor, invoice_number, date, total
 ```
 
 The field list is the single source of truth: it becomes the filename schema
-(`{doc_code} - {title} - {models} - {date}`) **and** the JSON schema the vision
-model is asked to return (`confidence` and `needs_human` are added automatically).
+(`{vendor} - {invoice_number} - {date} - {total}`) **and** the JSON schema the
+vision model is asked to return (`confidence` and `needs_human` are added
+automatically).
 Then:
 
 ```
@@ -235,13 +236,13 @@ TUI); they appear in the picker and in detection.
 
 ```json
 "presets": {
-  "wis": {
-    "label": "Mercedes WIS service docs",
-    "description": "DaimlerChrysler WIS print-outs; code + heading per page.",
-    "name_template": "{doc_code} - {title}",
+  "invoices": {
+    "label": "Invoices & receipts",
+    "description": "Bills and receipts; vendor, invoice number, date, total.",
+    "name_template": "{vendor} - {invoice_number} - {date}",
     "mode": "rename",
-    "vision_prompt": "You are given ONE Mercedes-Benz WIS print-out ...",
-    "detect": {"regex": "[A-Z]{2}\\d{2}\\.\\d{2}-[A-Z]-\\d{3,4}", "keywords": ["daimlerchrysler"]}
+    "vision_prompt": "Read this invoice and return JSON: vendor, invoice_number, date, total, needs_human.",
+    "detect": {"regex": "(?i)invoice\\s*(no|number|#)?\\s*[:#]?\\s*[A-Z0-9-]{3,}", "keywords": ["invoice", "receipt", "total due"]}
   }
 }
 ```
@@ -261,9 +262,9 @@ demand with **Settings → 1 → d**. From the shell:
 
 ```bash
 mmmdocs presets                  # list built-ins + user presets
-mmmdocs detect "/path/to/docs"   # -> {preset: wis, confidence: .., scores: {...}}
-mmmdocs run "/path/to/docs" --preset auto     # detect, then apply
-mmmdocs run "/path/to/docs" --preset wis      # force one
+mmmdocs detect "/path/to/docs"   # -> {preset: invoices, confidence: .., scores: {...}}
+mmmdocs run "/path/to/docs" --preset auto        # detect, then apply
+mmmdocs run "/path/to/docs" --preset invoices    # force one
 ```
 
 Because presets are just defaults, editing the prompt or template afterwards marks

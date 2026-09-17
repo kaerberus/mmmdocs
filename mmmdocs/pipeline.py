@@ -86,7 +86,7 @@ def mode_flags(mode):
 def load_config(path=None):
     """defaults -> preset -> repo config.json -> explicit path.
 
-    An explicit key always beats the preset, so `preset: wis` plus a custom
+    An explicit key always beats the preset, so a named preset plus a custom
     `vision_prompt` means the custom prompt wins. Empty strings reset to default.
     """
     raw = {}
