@@ -78,7 +78,6 @@ MARKER="# added by mmmdocs installer"
 if [ -n "$RC" ] && ! grep -qF "$MARKER" "$RC" 2>/dev/null; then
   {
     printf '\n%s\n' "$MARKER"
-    printf 'export MMMDOCS_HOME="%s"\n' "$INSTALL_DIR"
     printf 'case ":$PATH:" in *":%s:"*) ;; *) export PATH="%s:$PATH" ;; esac\n' "$BIN_DIR" "$BIN_DIR"
   } >>"$RC"
   say "Added $BIN_DIR to PATH in $RC (open a new shell or run: source $RC)"

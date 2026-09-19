@@ -65,7 +65,6 @@ Optional: `export PATH="$PWD/bin:$PATH"` to call `mmmdocs` instead of
 - [Configuration](#configuration)
 - [Output files](#output-files)
 - [Benchmarking models](#benchmarking-models)
-- [opencode integration](#opencode-integration)
 - [Troubleshooting](#troubleshooting)
 - [Layout](#layout)
 - [License](#license)
@@ -523,27 +522,6 @@ gemma4:e4b   json_ok=1.0 needs_human=0.0 avg=14.2s avg_bytes=51200
 Metrics per model: JSON-valid rate, `needs_human` rate, average seconds per file,
 average image bytes — enough to choose on evidence.
 
-## opencode integration
-
-The same engine backs the opencode `rpdf_*` tools and the `rpdf` / `librarian`
-agents. `~/.config/opencode/tools/rpdf.py` is a shim that imports this package;
-point it elsewhere with `MMMDOCS_HOME`:
-
-```bash
-export MMMDOCS_HOME="/path/to/mmmdocs"
-```
-
-Agent variants (`rpdf-e2b`, `rpdf-e4b`, `rpdf-12b`, `rpdf-26b`, `rpdf-31b`, and
-`librarian-*`) are generated from the base agent files:
-
-```bash
-python3 tools/make_agents.py            # regenerate
-python3 tools/make_agents.py --check    # report drift only
-```
-
-Apply a librarian plan from opencode with `/apply-organizer <dir>` (dry-run first).
-Restart opencode after changing config, agents, or the shim.
-
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -576,14 +554,13 @@ mmmdocs/
 │   └── cli.py         # argparse front-end (python -m mmmdocs <command>)
 ├── bin/mmmdocs        # launcher
 ├── install.sh         # curl | bash installer
-├── tools/make_agents.py
 ├── config.example.json
 ├── LICENSE
 └── requirements.txt
 ```
 
-`engine.py` is intentionally free of model calls so it can be tested, reused, and
-shared by both the CLI and the opencode tools.
+`engine.py` is intentionally free of model calls so it can be tested and reused
+by both the CLI and the TUI.
 
 ## License
 

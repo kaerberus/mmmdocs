@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """mmmdocs.engine -- inspect, search, extract text from and rasterize PDF pages.
 
-This is the single canonical PDF engine shared by:
-  * the standalone `mmmdocs` CLI (mmmdocs/pipeline.py, mmmdocs/cli.py), and
-  * the opencode `rpdf_*` tools (~/.config/opencode/tools/rpdf.py is a shim).
+This is the single canonical PDF engine shared by the standalone `mmmdocs` CLI
+(mmmdocs/pipeline.py, mmmdocs/cli.py) and the TUI.
 
 It is intentionally pure: it never calls a language model. It only turns PDFs
 into JSON metadata and rasterized images.
@@ -436,7 +435,7 @@ def render_data(pdf, pages_spec, profile="default", dpi=None, max_edge=None,
         die("No valid pages selected from spec %r (document has %d pages)" % (pages_spec, total))
     if len(pages) > max_pages:
         die(
-            "Requested %d pages but max is %d per call. Split into several rpdf_render "
+            "Requested %d pages but max is %d per call. Split into several render "
             "calls, or pass a larger max_pages explicitly." % (len(pages), max_pages)
         )
 
